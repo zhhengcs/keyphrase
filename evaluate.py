@@ -142,23 +142,17 @@ def evaluate_beam_search(generator, data_loader, opt, title='', epoch=1, save_pa
     for i, batch in enumerate(data_loader):
         # if i > 3:
         #     break
-        print(i)
-        continue
+
         one2many_batch = batch
         src_list, src_len, trg_list, _, trg_copy_target_list, src_oov_map_list, oov_list, src_str_list, trg_str_list = one2many_batch
-        # exit(0)
-        # print(src_list.size(),'src_list')
-        # print(len(trg_list))
-        # print(*trg_list,sep='\n')
-        # exit(0)
-        # continue
-        if torch.cuda.is_available():
+
+        if torch.cuda.is_available() and opt.use_gpu:
             src_list = src_list.cuda()
             src_oov_map_list = src_oov_map_list.cuda()
         
         pred_seq_list = generator.beam_search(src_list, src_len, src_oov_map_list, oov_list, opt.word2id)
         
-        # exit(0)
+        
         '''
         process each example in current batch
         '''
@@ -185,35 +179,6 @@ def evaluate_beam_search(generator, data_loader, opt, title='', epoch=1, save_pa
 
             match_list = get_match_result(true_seqs=trg_str_seqs, pred_seqs=processed_pred_str_seqs)
             
-            '''
-            Print and export predictions
-            '''
-            preds_out = ''
-
-            # for p_id, (seq, word, score, match, is_valid, is_present) in enumerate(
-            #         zip(processed_pred_seqs, processed_pred_str_seqs, processed_pred_score, match_list, pred_is_valid, pred_is_present)):
-            #     # if p_id > 5:
-            #     #     break
-
-            #     preds_out += '%s\n' % (' '.join(word))
-            #     if is_present:
-            #         print_phrase = '[%s]' % ' '.join(word)
-            #     else:
-            #         print_phrase = ' '.join(word)
-
-            #     if is_valid:
-            #         print_phrase = '*%s' % print_phrase
-
-            #     if match == 1.0:
-            #         correct_str = '[correct!]'
-            #     else:
-            #         correct_str = ''
-            #     if any([t >= opt.vocab_size for t in seq.sentence]):
-            #         copy_str = '[copied!]'
-            #     else:
-            #         copy_str = ''
-
-                
 
             '''
             Evaluate predictions w.r.t different filterings and metrics
@@ -240,10 +205,6 @@ def evaluate_beam_search(generator, data_loader, opt, title='', epoch=1, save_pa
                         if '%s@%d#oneword=%d' % (k, topk, num_oneword_seq) not in score_dict:
                             score_dict['%s@%d#oneword=%d' % (k, topk, num_oneword_seq)] = []
                         score_dict['%s@%d#oneword=%d' % (k, topk, num_oneword_seq)].append(v)
-
-                        
-            # exit(0)
-            # logging.info(print_out)
 
 
             if example_idx%100 == 0:
@@ -282,12 +243,6 @@ def evaluate_beam_search(generator, data_loader, opt, title='', epoch=1, save_pa
                     csv_lines.append(csv_line + '\n')
 
             result_csv.writelines(csv_lines)
-
-    # precision, recall, f_score = macro_averaged_score(precisionlist=score_dict['precision'], recalllist=score_dict['recall'])
-    # logging.info("Macro@5\n\t\tprecision %.4f\n\t\tmacro recall %.4f\n\t\tmacro fscore %.4f " % (np.average(score_dict['precision@5']), np.average(score_dict['recall@5']), np.average(score_dict['f1score@5'])))
-    # logging.info("Macro@10\n\t\tprecision %.4f\n\t\tmacro recall %.4f\n\t\tmacro fscore %.4f " % (np.average(score_dict['precision@10']), np.average(score_dict['recall@10']), np.average(score_dict['f1score@10'])))
-    # precision, recall, f_score = evaluate(true_seqs=target_all, pred_seqs=prediction_all, topn=5)
-    # logging.info("micro precision %.4f , micro recall %.4f, micro fscore %.4f " % (precision, recall, f_score))
 
     return score_dict
 

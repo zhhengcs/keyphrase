@@ -100,7 +100,7 @@ def init_model(opt):
             open(meta_model_dir, 'wb')
         )
 
-    if torch.cuda.is_available():
+    if torch.cuda.is_available() and opt.use_gpu:
         model = model.cuda()
 
     utils.tally_parameters(model)
@@ -151,14 +151,14 @@ def main():
 
     try:
 
-        opt.train_from = 'model/kp20k.ml.copy.uni-directional.20180821-135347/kp20k.ml.copy.uni-directional.epoch=7.batch=6930.total_batch=84600.model'
+        # opt.train_from = 'model/kp20k.ml.copy.uni-directional.20180821-135347/kp20k.ml.copy.uni-directional.epoch=7.batch=6930.total_batch=84600.model'
         test_data_loader, word2id, id2word, vocab = load_data_vocab(opt, load_train=False)
         model = init_model(opt)
 
-        generator = SequenceGenerator(model,
+        generator = SequenceGenerator(model,opt,
                                       eos_id=opt.word2id[pykp.io.EOS_WORD],
                                       beam_size=opt.beam_size,
-                                      max_sequence_length=opt.max_sent_length
+                                      max_sequence_length=opt.max_sent_length,
                                       )
 
         evaluate_beam_search(generator, test_data_loader, opt, title='predict', save_path=opt.pred_path + '/[epoch=%d,batch=%d,total_batch=%d]test_result.csv' % (0, 0, 0))

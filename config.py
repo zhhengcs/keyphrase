@@ -36,6 +36,8 @@ def model_opts(parser):
     These options are passed to the construction of the model.
     Be careful with these as they will be used during translation.
     """
+    # Device options
+    parser.add_argument('-use_gpu',default=False,help='Use GPU or not.')
     # Embedding Options
     parser.add_argument('-word_vec_size', type=int, default=64,
                         help='Word embedding for both.')

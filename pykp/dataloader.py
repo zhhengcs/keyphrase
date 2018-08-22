@@ -603,7 +603,6 @@ class BucketIterator(object):
 
     def __iter__(self):
         while True:
-
             self.init_batches()
             for idx, minibatch in enumerate(self.batches):
                 yield minibatch

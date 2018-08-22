@@ -35,78 +35,21 @@ from pykp.model import Seq2SeqLSTMAttention, Seq2SeqLSTMAttentionCascading
 from pykp.dataloader import BucketIterator,KeyphraseDataset
 import time
 
-def to_cpu_list(input):
-    assert isinstance(input, list)
-    output = [int(item.data.cpu().numpy()) for item in input]
-    return output
-
-
-def time_usage(func):
-    # argnames = func.func_code.co_varnames[:func.func_code.co_argcount]
-    fname = func.__name__
-
-    def wrapper(*args, **kwargs):
-        beg_ts = time.time()
-        retval = func(*args, **kwargs)
-        end_ts = time.time()
-        print(fname, "elapsed time: %f" % (end_ts - beg_ts))
-        return retval
-
-    return wrapper
 
 
 __author__ = "Rui Meng"
 __email__ = "rui.meng@pitt.edu"
 
 
-@time_usage
-def _valid_error(data_loader, model, criterion, epoch, opt):
-    progbar = Progbar(title='Validating', target=len(data_loader), batch_size=data_loader.batch_size,
-                      total_examples=len(data_loader.dataset))
-    model.eval()
-
-    losses = []
-
-    # Note that the data should be shuffled every time
-    for i, batch in enumerate(data_loader):
-        # if i >= 100:
-        #     break
-
-        one2many_batch, one2one_batch = batch
-        src, trg, trg_target, trg_copy_target, src_ext, oov_lists = one2one_batch
-
-        if torch.cuda.is_available():
-            src = src.cuda()
-            trg = trg.cuda()
-            trg_target = trg_target.cuda()
-            trg_copy_target = trg_copy_target.cuda()
-            src_ext = src_ext.cuda()
-
-        decoder_log_probs, _, _ = model.forward(src, trg, src_ext)
-
-        if not opt.copy_attention:
-            loss = criterion(
-                decoder_log_probs.contiguous().view(-1, opt.vocab_size),
-                trg_target.contiguous().view(-1)
-            )
-        else:
-            loss = criterion(
-                decoder_log_probs.contiguous().view(-1, opt.vocab_size + opt.max_unk_words),
-                trg_copy_target.contiguous().view(-1)
-            )
-        losses.append(loss.data[0])
-
-        progbar.update(epoch, i, [('valid_loss', loss.data[0]), ('PPL', loss.data[0])])
-
-    return losses
-
-
 def train_ml(one2one_batch, model, optimizer, criterion, opt):
     src, src_len, trg, trg_target, trg_copy_target, src_oov, oov_lists = one2one_batch
+
+    query_src = src[:,:5]
+
     #
     max_oov_number = max([len(oov) for oov in oov_lists])
 
-    if torch.cuda.is_available():
+    if torch.cuda.is_available() and opt.use_gpu:
         src = src.cuda()
         trg = trg.cuda()
         trg_target = trg_target.cuda()
@@ -114,8 +57,8 @@ def train_ml(one2one_batch, model, optimizer, criterion, opt):
         src_oov = src_oov.cuda()
 
     optimizer.zero_grad()
-
-    decoder_log_probs, _, _ = model.forward(src, src_len, trg, src_oov, oov_lists)
+    
+    decoder_log_probs, _, _ = model.forward(src, src_len, trg, src_oov, oov_lists,query_src=query_src)
     # print(decoder_log_probs.size(),'decoder_log_probs')
     # exit(0)
     # print('*'*50)
@@ -151,73 +94,12 @@ def train_ml(one2one_batch, model, optimizer, criterion, opt):
 
     return loss.data.item(), decoder_log_probs
 
-
-def brief_report(epoch, batch_i, one2one_batch, loss_ml, decoder_log_probs, opt):
-    logging.info('======================  %d  =========================' % (batch_i))
-
-    logging.info('Epoch : %d Minibatch : %d, Loss=%.5f' % (epoch, batch_i, np.mean(loss_ml)))
-    sampled_size = 2
-    logging.info('Printing predictions on %d sampled examples by greedy search' % sampled_size)
-
-    src, _, trg, trg_target, trg_copy_target, src_ext, oov_lists = one2one_batch
-    if torch.cuda.is_available():
-        src = src.data.cpu().numpy()
-        decoder_log_probs = decoder_log_probs.data.cpu().numpy()
-        max_words_pred = decoder_log_probs.argmax(axis=-1)
-        trg_target = trg_target.data.cpu().numpy()
-        trg_copy_target = trg_copy_target.data.cpu().numpy()
-    else:
-        src = src.data.numpy()
-        decoder_log_probs = decoder_log_probs.data.numpy()
-        max_words_pred = decoder_log_probs.argmax(axis=-1)
-        trg_target = trg_target.data.numpy()
-        trg_copy_target = trg_copy_target.data.numpy()
-
-    sampled_trg_idx = np.random.random_integers(low=0, high=len(trg) - 1, size=sampled_size)
-    src = src[sampled_trg_idx]
-    oov_lists = [oov_lists[i] for i in sampled_trg_idx]
-    max_words_pred = [max_words_pred[i] for i in sampled_trg_idx]
-    decoder_log_probs = decoder_log_probs[sampled_trg_idx]
-    if not opt.copy_attention:
-        trg_target = [trg_target[i] for i in
-                      sampled_trg_idx]  # use the real target trg_loss (the starting <BOS> has been removed and contains oov ground-truth)
-    else:
-        trg_target = [trg_copy_target[i] for i in sampled_trg_idx]
-
-    for i, (src_wi, pred_wi, trg_i, oov_i) in enumerate(
-            zip(src, max_words_pred, trg_target, oov_lists)):
-        nll_prob = -np.sum([decoder_log_probs[i][l][pred_wi[l]] for l in range(len(trg_i))])
-        find_copy = np.any([x >= opt.vocab_size for x in src_wi])
-        has_copy = np.any([x >= opt.vocab_size for x in trg_i])
-
-        sentence_source = [opt.id2word[x] if x < opt.vocab_size else oov_i[x - opt.vocab_size] for x in
-                           src_wi]
-        sentence_pred = [opt.id2word[x] if x < opt.vocab_size else oov_i[x - opt.vocab_size] for x in
-                         pred_wi]
-        sentence_real = [opt.id2word[x] if x < opt.vocab_size else oov_i[x - opt.vocab_size] for x in
-                         trg_i]
-
-        sentence_source = sentence_source[:sentence_source.index(
-            '<pad>')] if '<pad>' in sentence_source else sentence_source
-        sentence_pred = sentence_pred[
-            :sentence_pred.index('<pad>')] if '<pad>' in sentence_pred else sentence_pred
-        sentence_real = sentence_real[
-            :sentence_real.index('<pad>')] if '<pad>' in sentence_real else sentence_real
-
-        logging.info('==================================================')
-        # logging.info('Source: %s ' % (' '.join(sentence_source)))
-        logging.info('\t\tPred : %s (%.4f)' % (' '.join(sentence_pred), nll_prob) + (
-            ' [FIND COPY]' if find_copy else ''))
-        logging.info('\t\tReal : %s ' % (' '.join(sentence_real)) + (
-            ' [HAS COPY]' + str(trg_i) if has_copy else ''))
-
-
 def train_model(model, optimizer_ml, optimizer_rl, criterion, train_data_loader,  opt):
-    generator = SequenceGenerator(model,
-                                  eos_id=opt.word2id[pykp.io.EOS_WORD],
-                                  beam_size=opt.beam_size,
-                                  max_sequence_length=opt.max_sent_length
-                                  )
+    # generator = SequenceGenerator(model,opt
+    #                               eos_id=opt.word2id[pykp.io.EOS_WORD],
+    #                               beam_size=opt.beam_size,
+    #                               max_sequence_length=opt.max_sent_length
+    #                               )
 
     logging.info('======================  Start Training  =========================')
 
@@ -325,7 +207,7 @@ def init_optimizer_criterion(model, opt):
     else:
         optimizer_rl = None
 
-    if torch.cuda.is_available():
+    if torch.cuda.is_available() and opt.use_gpu:
         criterion = criterion.cuda()
 
     return optimizer_ml, optimizer_rl, criterion
@@ -347,7 +229,7 @@ def init_model(opt):
         #     open(os.path.join(opt.model_path, opt.exp, '.initial.model'), 'wb')
         # )
 
-        if torch.cuda.is_available():
+        if torch.cuda.is_available() and opt.use_gpu:
             checkpoint = torch.load(open(opt.train_from, 'rb'))
         else:
             checkpoint = torch.load(
@@ -365,7 +247,7 @@ def init_model(opt):
             open(meta_model_dir, 'wb')
         )
 
-    if torch.cuda.is_available():
+    if torch.cuda.is_available() and opt.use_gpu:
         model = model.cuda()
 
     utils.tally_parameters(model)

@@ -124,7 +124,7 @@ class SequenceGenerator(object):
     """Class to generate sequences from an image-to-text model."""
 
     def __init__(self,
-                 model,
+                 model,opt,
                  eos_id=None,
                  beam_size=3,
                  max_sequence_length=5,
@@ -154,6 +154,7 @@ class SequenceGenerator(object):
         self.length_normalization_const = length_normalization_const
         self.return_attention = return_attention
         self.get_mask = GetMask()
+        self.opt = opt
 
     def sequence_to_batch(self, sequence_lists):
         '''
@@ -186,7 +187,8 @@ class SequenceGenerator(object):
         src_oovs = torch.cat([seq.src_oov for seq in flattened_sequences]).view(batch_size, *flattened_sequences[0].src_oov.size())
         oov_lists = [seq.oov_list for seq in flattened_sequences]
 
-        if torch.cuda.is_available():
+        
+        if torch.cuda.is_available() and self.opt.use_gpu:
             inputs = inputs.cuda()
             if isinstance(flattened_sequences[0].dec_hidden, tuple):
                 dec_hiddens = (dec_hiddens[0].cuda(), dec_hiddens[1].cuda())

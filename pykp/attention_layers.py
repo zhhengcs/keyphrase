@@ -6,12 +6,10 @@ from SubLayers import MultiHeadAttention,PositionwiseFeedForward,BottleSoftmax
 import numpy as np
 import dataloader
 
-def extract_last(input,input_lengths):
+def extract_last(input,input_lengths,opt=None):
 
 	idx = (torch.LongTensor(input_lengths) - 1).view(-1, 1).expand(len(input_lengths),input.size()[-1]).unsqueeze(1)
-	if config.use_gpu:
-		idx = idx.cuda()
-	return torch.gather(input,dim=1,index=idx).squeeze(1)
+	return torch.gather(input,dim=1,index=idx).transpose(0,1)
 
 def position_encoding_init(n_position, d_pos_vec):
 	''' Init the sinusoid position encoding table '''
@@ -49,10 +47,11 @@ class Google_self_attention(nn.Module):
 		super(Google_self_attention,self).__init__()
 		self.add_pos = add_pos
 		
-		self.position_enc = nn.Embedding(opt.max_src_seq_length+5,opt.word_vec_size,
+		if add_pos:
+			self.position_enc = nn.Embedding(opt.max_src_seq_length+5,opt.word_vec_size,
 		 					padding_idx=opt.word2id[dataloader.PAD_WORD])
 
-		self.position_enc.weight.data = position_encoding_init(opt.max_src_seq_length+5, 
+			self.position_enc.weight.data = position_encoding_init(opt.max_src_seq_length+5, 
 							opt.word_vec_size)
 		
 		d_k,d_v = opt.d_k,opt.d_v
@@ -64,7 +63,7 @@ class Google_self_attention(nn.Module):
 				EncoderLayer(d_model,d_inner_hid,n_head, d_k, d_v, dropout=dropout)
 				for _ in range(n_layers)])
 
-	def forward(self,seq_emb,seq_pos,seq_mask=None,return_attns=False):
+	def forward(self,seq_emb,seq_pos=None,seq_mask=None,return_attns=False):
 		
 		if seq_pos is not None:
 			pos_emb = self.position_enc(seq_pos)
@@ -91,16 +90,32 @@ def isnan(x):
     return torch.isnan(x).sum()
 
 class Cross_attention(nn.Module):
-	def __init__(self):
+	def __init__(self,opt):
 		super(Cross_attention,self).__init__()
-		self.softmax = nn.Softmax(dim=-1)
 
+		self.softmax = nn.Softmax(dim=-1)
+		self.enc2dec1 = nn.Linear(opt.rnn_size*3,opt.rnn_size)
+		self.enc2dec2 = nn.Linear(opt.rnn_size*2,opt.rnn_size)
 	def forward(self,D,doc_mask,doc_lens,Q,query_mask):
-		
+		'''
+		param:
+            D: (batch_size, src_len, hidden_dim)
+            doc_mask:(batch,query_len,src_len)
+            Q: (batch_size, query_len, hidden_dim)
+            query_mask:(batch_size,src_len,query_len)
+      
+        return:
+            doc_output (batch_size, Src_len, hidden_dim)
+            doc_hidden (batch_size, Src_len, hidden_dim)
+    		query_output (batch,query_len,hidden_dim)          
+	
+		'''
 		A_d = torch.bmm(D,Q.transpose(1,2))
 		A_q = torch.bmm(Q,D.transpose(1,2))
 
+
 		A_d = self.softmax(A_d.data.masked_fill_(query_mask, -float('inf')))
+
 		A_q = self.softmax(A_q.data.masked_fill_(doc_mask,-float('inf')))
 
 		C_q = torch.bmm(A_q,D)
@@ -109,7 +124,11 @@ class Cross_attention(nn.Module):
 		query_output = torch.cat([Q,C_q],dim=-1)
 		C_D = torch.bmm(A_d,query_output)
 		doc_output = torch.cat([C_D,D],dim=-1)
-		return doc_output,query_output,extract_last(doc_output,doc_lens)
+
+		doc_output = self.enc2dec1(doc_output)
+		query_output = self.enc2dec2(query_output)
+		# doc_hidden = self.enc2dec()
+		return doc_output,extract_last(doc_output,doc_lens),query_output
 
 if __name__ == '__main__':
 
