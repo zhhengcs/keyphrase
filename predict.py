@@ -34,19 +34,8 @@ def load_data_vocab(opt, load_train=False):
 
 
     logging.info('======================  Test Dataset  =========================')
-    # one2many data loader
+    
 
-    # test_one2many = torch.load(opt.data + '.test.one2many.pt', 'wb')
-    # test_one2many = test_one2many
-    # test_one2many_dataset = KeyphraseDataset(test_one2many, word2id=word2id, id2word=id2word, 
-    #                     type='one2many', include_original=True)
-
-    # test_one2many_loader = KeyphraseDataLoader(dataset=test_one2many_dataset, 
-    #                     collate_fn=test_one2many_dataset.collate_fn_one2many, 
-    #                     num_workers=opt.batch_workers, 
-    #                     max_batch_example=opt.beam_search_batch_example, 
-    #                     max_batch_pair=opt.beam_search_batch_size, 
-    #                     pin_memory=True, shuffle=False)
     opt.word2id = word2id
     opt.id2word = id2word
     opt.vocab = vocab
@@ -60,6 +49,8 @@ def load_data_vocab(opt, load_train=False):
                                             shuffle=False,
                                             length=18601)
     
+
+
     logging.info('#(test data size:  #(one2many pair)=%d, #(batch)=%d' % (len(test_one2many_loader), len(test_one2many_loader)/opt.beam_batch))
 
     logging.info('#(vocab)=%d' % len(vocab))
@@ -150,7 +141,7 @@ def main():
 
 
     try:
-        opt.train_from = 'model/kp20k.ml.copy.uni-directional.20180822-205401/kp20k.ml.copy.uni-directional.epoch=2.batch=3255.total_batch=16200.model'
+        opt.train_from = 'model/kp20k.ml.copy.uni-directional.20180823-003425/kp20k.ml.copy.uni-directional.epoch=1.batch=9800.total_batch=9800.model'
         test_data_loader, word2id, id2word, vocab = load_data_vocab(opt, load_train=False)
         model = init_model(opt)
 

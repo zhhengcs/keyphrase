@@ -262,17 +262,10 @@ class Seq2SeqLSTMAttention(nn.Module):
 
         self.attention_layer = Attention(self.src_hidden_dim * self.num_directions, self.trg_hidden_dim, method=self.attention_mode)
 
-        self.encoder2decoder_hidden = nn.Linear(
+        self.encoder2decoder = nn.Linear(
             self.src_hidden_dim * self.num_directions,
             self.trg_hidden_dim
         )
-
-        self.encoder2decoder_cell = nn.Linear(
-            self.src_hidden_dim * self.num_directions,
-            self.trg_hidden_dim
-        )
-
-        self.decoder2vocab = nn.Linear(self.trg_hidden_dim, self.vocab_size)
 
         # copy attention
         if self.copy_attention:
@@ -324,38 +317,32 @@ class Seq2SeqLSTMAttention(nn.Module):
         self.embedding.weight.data.uniform_(-initrange, initrange)
         # fill with fixed numbers for debugging
         # self.embedding.weight.data.fill_(0.01)
-        self.encoder2decoder_hidden.bias.data.fill_(0)
-        self.encoder2decoder_cell.bias.data.fill_(0)
-        self.decoder2vocab.bias.data.fill_(0)
+        self.encoder2decoder.bias.data.fill_(0)
+        
 
     def init_encoder_state(self, input):
         """Get cell states and hidden states."""
         batch_size = input.size(0) \
             if self.encoder.batch_first else input.size(1)
 
-        h0_encoder = Variable(torch.zeros(
+        h_encoder = Variable(torch.zeros(
             self.encoder.num_layers * self.num_directions,
             batch_size,
             self.src_hidden_dim
         ), requires_grad=False)
 
-        c0_encoder = Variable(torch.zeros(
-            self.encoder.num_layers * self.num_directions,
-            batch_size,
-            self.src_hidden_dim
-        ), requires_grad=False)
-
+ 
         if torch.cuda.is_available() and self.use_gpu:
-            return h0_encoder.cuda()#, c0_encoder.cuda()
+            return h_encoder.cuda()#, c0_encoder.cuda()
 
-        return h0_encoder#, c0_encoder
+        return h_encoder#, c0_encoder
 
     def init_decoder_state(self, enc_h, enc_c=None):
         # prepare the init hidden vector for decoder, (batch_size, num_layers * num_directions * enc_hidden_dim) -> (num_layers * num_directions, batch_size, dec_hidden_dim)
-        decoder_init_hidden = nn.Tanh()(self.encoder2decoder_hidden(enc_h)).unsqueeze(0)
-        decoder_init_cell = nn.Tanh()(self.encoder2decoder_cell(enc_c)).unsqueeze(0)
+        decoder_init_hidden = nn.Tanh()(self.encoder2decoder(enc_h))
+        decoder_init_state = nn.Tanh()(self.encoder2decoder(enc_c)).unsqueeze(0)
 
-        return decoder_init_hidden, decoder_init_cell
+        return decoder_init_hidden, decoder_init_state
 
     def forward(self, input_src, input_src_len, input_trg, input_src_ext, oov_lists, 
                     trg_mask=None, ctx_mask=None,query_src = None):
@@ -460,8 +447,7 @@ class Seq2SeqLSTMAttention(nn.Module):
             # print('-----------------step %d--------------------'%di)
 
         decoder_probs = torch.stack(decoder_probs,dim=1)
-        # decoder_hiddens = 
-        # print(decoder_probs.size())        
+   
         decoder_probs = torch.log(decoder_probs+1e-12)
         
         return decoder_probs,decoder_hiddens,None,None
@@ -501,28 +487,26 @@ class Seq2SeqLSTMAttention(nn.Module):
         """
         Propogate input through the network.
         """
-        # initial encoder state, two zero-matrix as h and c at time=0
+        # initial encoder state
         self.h_encoder = self.init_encoder_state(input_src)  # (self.encoder.num_layers * self.num_directions, batch_size, self.src_hidden_dim)
-
-        # input (batch_size, src_len), src_emb (batch_size, src_len, emb_dim)
         
         src_emb = self.embedding(input_src)
-
         src_emb = nn.utils.rnn.pack_padded_sequence(src_emb, input_src_len, batch_first=True)
 
+        
+        
         src_h, src_state = self.encoder(src_emb, self.h_encoder)
         src_h, _ = nn.utils.rnn.pad_packed_sequence(src_h, batch_first=True)
         
+        if self.bidirectional:
+            src_state = torch.cat([src_state[0],src_state[1]],-1)
+        # print(src_h.size(),'src_h')
+        # print(src_state.size(),'src_state')
+        
+        src_h,src_state = self.init_decoder_state(src_h,src_state)
+        # print(src_h.size(),'src_h')
+        # print(src_state.size(),'src_state')
         return src_h, src_state
-        
-    # def attention_encoder(self,input_src,input_src_len,query_src,query_len):
-    #     input_mask = self.get_attn_padding_mask(input_src,input_src)
-    #     src_emb = self.embedding(input_src)
-        
-    #     enc_output,_ =  self.slf_attn_layer(src_emb,None,input_mask)
-
-
-
 
     def get_attn_padding_mask(self,seq_q, seq_k):
         ''' Indicate the padding-related part to mask '''
@@ -1103,11 +1087,11 @@ class MeMDecoder(nn.Module):
         
         for i in range(2):
             s_t,attn_dist,c_t = self.ntm.Read(s_t)
-            # _,s_t = self.gru2(context_t,s_t)
+                # _,s_t = self.gru2(context_t,s_t)
 
-            # c_t, attn_dist,_ = self.attention_network(s_t.transpose(0,1), encoder_outputs, enc_padding_mask)            
-            # s_t = torch.cat((s_t.view(-1,hidden_dim*1), c_t.view(-1,hidden_dim*1)), -1)
-            # s_t = self.s_context(s)
+                # c_t, attn_dist,_ = self.attention_network(s_t.transpose(0,1), encoder_outputs, enc_padding_mask)            
+                # s_t = torch.cat((s_t.view(-1,hidden_dim*1), c_t.view(-1,hidden_dim*1)), -1)
+                # s_t = self.s_context(s)
             self.ntm.Write(s_t)
 
         #End st

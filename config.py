@@ -84,7 +84,7 @@ def model_opts(parser):
                              "embeddings) to the decoder.")
 
     parser.add_argument('-bidirectional',
-                        action = "store_true",
+                        action = "store_true",default=True,
                         help="whether the encoder is bidirectional")
 
     # Attention options

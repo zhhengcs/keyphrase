@@ -94,7 +94,7 @@ def train_ml(one2one_batch, model, optimizer, criterion, opt):
 
     return loss.data.item(), decoder_log_probs
 
-def train_model(model, optimizer_ml, optimizer_rl, criterion, train_data_loader,  opt):
+def train_model(model, optimizer_ml, optimizer_rl, criterion, train_data_loader,  opt,eval_dataloader):
     # generator = SequenceGenerator(model,opt
     #                               eos_id=opt.word2id[pykp.io.EOS_WORD],
     #                               beam_size=opt.beam_size,
@@ -118,8 +118,7 @@ def train_model(model, optimizer_ml, optimizer_rl, criterion, train_data_loader,
     early_stop_flag = False
     st = time.time()
     for epoch in range(opt.start_epoch, opt.epochs):
-        if early_stop_flag:
-            break
+        
         batch_per_epoch = len(train_data_loader)/opt.batch_size
         for batch_i, batch in enumerate(train_data_loader):
             model.train()
@@ -144,8 +143,10 @@ def train_model(model, optimizer_ml, optimizer_rl, criterion, train_data_loader,
                     torch.save(model.state_dict(),open(save_dir, 'wb'))
                 except:
                     pass
-             
 
+
+        evaluate(model,eval_dataloader,opt)
+              
 def load_data_vocab(opt, load_train=True):
 
     logging.info("Loading vocab from disk: %s" % (opt.vocab))
@@ -161,6 +162,9 @@ def load_data_vocab(opt, load_train=True):
         train_one2one_loader = BucketIterator('./data/AAAI/kp20k.train.one2one.json',word2id,id2word,
                                             batch_size=opt.batch_size,
                                             repeat=False,sort=True,shuffle=False,length=2588873)
+        eval_dataloader = BucketIterator('./data/AAAI/small_test.json',word2id,id2word,
+                                            batch_size=opt.beam_size,
+                                            repeat=False,sort=True,shuffle=False,length=2000)
 
         logging.info('#(train data size:  #(one2one pair)=%d, #(batch)=%d' % (len(train_one2one_loader), len(train_one2one_loader) / train_one2one_loader.batch_size))
     else:	
@@ -173,7 +177,7 @@ def load_data_vocab(opt, load_train=True):
     logging.info('#(vocab)=%d' % len(vocab))
     logging.info('#(vocab used)=%d' % opt.vocab_size)
 
-    return train_one2one_loader, word2id, id2word, vocab
+    return train_one2one_loader, word2id, id2word, vocab,eval_dataloader
 
 
 def init_optimizer_criterion(model, opt):
@@ -306,6 +310,13 @@ def process_opt(opt):
 
     return opt
 
+def evaluate(model,opt,eval_dataloader):
+    generator = SequenceGenerator(model,opt,
+                                      eos_id=opt.word2id[pykp.io.EOS_WORD],
+                                      beam_size=opt.beam_size,
+                                      max_sequence_length=opt.max_sent_length,
+                                      )
+    evaluate_beam_search(generator, test_data_loader, opt, title='predict', save_path=opt.pred_path + '/[epoch=%d,batch=%d,total_batch=%d]test_result.csv' % (0, 0, 0))
 
 def main():
     # load settings for training
@@ -326,13 +337,14 @@ def main():
 
     logging = config.init_logging(logger_name=None, log_file=opt.exp_path + '/output.log', stdout=True)
     try:
-
+        # print(opt.bidirectional)
+        # exit(0)
         # opt.train_from = 'model/kp20k.ml.copy.uni-directional.20180817-021054/kp20k.ml.copy.uni-directional.epoch=6.batch=6735.total_batch=57300.model'
-        train_data_loader,word2id, id2word, vocab = load_data_vocab(opt)
+        train_data_loader,word2id, id2word, vocab,eval_dataloader = load_data_vocab(opt)
         model = init_model(opt)
                 
         optimizer_ml, _, criterion = init_optimizer_criterion(model, opt)
-        train_model(model, optimizer_ml, _, criterion, train_data_loader,  opt)
+        train_model(model, optimizer_ml, _, criterion, train_data_loader,  opt,eval_dataloader)
     except Exception as e:
         logging.exception("message")
 
