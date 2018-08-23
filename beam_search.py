@@ -263,9 +263,9 @@ class SequenceGenerator(object):
             # Run one-step generation. probs=(batch_size, 1, K), dec_hidden=tuple of (1, batch_size, trg_hidden_dim)
 
             if self.model.decoder_name == 'Memory Network':
-                self.model.Memory_Decoder.ntm.memory = contexts
-                self.model.Memory_Decoder.ntm.memory_mask = ctx_mask
-            
+                
+                self.model.Memory_Decoder.ntm.set_memory(contexts,ctx_mask)
+
                 log_probs,new_dec_hiddens,attn_weights = self.model.memory_generate(
                 trg_inputs = inputs,
                 dec_hidden = dec_hiddens,

@@ -1143,7 +1143,7 @@ class NTMMemory(nn.Module):
 
     def Read(self, q_t):
         """Read from memory (according to section 3.1)."""
-        
+          
         c1,attn_dist,_ = self.attention_read(q_t.transpose(0,1),self.Q_memory,self.memory_mask)
         
         q_t = self.s_context(torch.cat((q_t, c1.transpose(0,1)), -1))
