@@ -394,8 +394,6 @@ class Seq2SeqLSTMAttention(nn.Module):
             
         elif self.encoder_name == 'BiGRU':
             encoder_outputs, encoder_hidden = self.encode(input_src, input_src_len)
-            
-        
 
         if self.decoder_name == 'Memory Network':
             
@@ -1083,7 +1081,7 @@ class MeMDecoder(nn.Module):
         self.attention_network = Attention(opt.rnn_size,opt.rnn_size)
         self.embedding = nn.Embedding(opt.vocab_size, opt.word_vec_size,padding_idx=opt.word2id[pykp.io.PAD_WORD])
         self.x_context = nn.Linear(opt.rnn_size + opt.rnn_size, opt.rnn_size)
-        self.s_context = nn.Linear(opt.rnn_size+opt.rnn_size,opt.rnn_size)
+        
 
         self.gru1 = nn.GRU(opt.rnn_size,opt.rnn_size,num_layers=1,batch_first=True,bidirectional=False)
         self.gru2 = nn.GRU(opt.rnn_size,opt.rnn_size,num_layers=1,batch_first=True,bidirectional=False)
@@ -1101,30 +1099,31 @@ class MeMDecoder(nn.Module):
         x = self.x_context(torch.cat((c_t_1, y_t_1_embd.unsqueeze(1)), -1))
 
         # first st
-        gru_out, s_t_1_ = self.gru1(x, s_t_1)
+        gru_out, s_t = self.gru1(x, s_t_1)
         
         for i in range(2):
-            context_t = self.ntm.Read(s_t_1_)
-            _,s_t = self.gru2(context_t,s_t_1_)
+            s_t,attn_dist,c_t = self.ntm.Read(s_t)
+            # _,s_t = self.gru2(context_t,s_t)
+
+            # c_t, attn_dist,_ = self.attention_network(s_t.transpose(0,1), encoder_outputs, enc_padding_mask)            
+            # s_t = torch.cat((s_t.view(-1,hidden_dim*1), c_t.view(-1,hidden_dim*1)), -1)
             # s_t = self.s_context(s)
             self.ntm.Write(s_t)
 
-
         #End st
-        hidden_dim = s_t.size()[-1]
+        # c_t, attn_dist,_ = self.attention_network(s_t.transpose(0,1), encoder_outputs, enc_padding_mask)
+        # output = torch.cat((s_t.view(-1,hidden_dim*1), c_t.view(-1,hidden_dim*1)), -1) # B x hidden_dim *2
+        # output = self.out1(output) # B x hidden_dim
+        # output = F.relu(output)
 
-        c_t, attn_dist,_ = self.attention_network(s_t.transpose(0,1), encoder_outputs, enc_padding_mask)
- 
-        output = torch.cat((s_t.view(-1,hidden_dim*1), c_t.view(-1,hidden_dim*1)), -1) # B x hidden_dim *2
-        output = self.out1(output) # B x hidden_dim
-        output = F.relu(output)
-        output = self.out2(output) # B x vocab_size
+        output = self.out2(s_t.squeeze(0)) # B x vocab_size
         vocab_dist = F.softmax(output, dim=-1)
 
         vocab_dist_ = 0.5* vocab_dist
         attn_dist_ = (1 - 0.5) * attn_dist
 
-        if extra_zeros is not None:    
+        if extra_zeros is not None:
+            
             vocab_dist_ = torch.cat([vocab_dist_, extra_zeros], -1)
         
         seq_len = attn_dist_.size()[-1]
@@ -1143,35 +1142,38 @@ class NTMMemory(nn.Module):
         """
         super(NTMMemory, self).__init__()
 
-
+        self.s_context = nn.Linear(opt.rnn_size+opt.rnn_size,opt.rnn_size)
         self.attention_read = Attention(opt.rnn_size, opt.rnn_size, method=attention_mode)
-        # self.memory_mask = memory_mask
-        # The memory bias allows the heads to learn how to initially address
-        # memory locations by content
-        # self.register_buffer('mem_bias', init_memory)
-
         self.W = nn.Parameter(torch.FloatTensor(opt.rnn_size, opt.rnn_size))
-        
         init.xavier_normal_(self.W)
         # self.WU.weight = self.WF.weight
     def set_memory(self,memory,mask):
-        self.memory = memory
+        self.Q_memory = memory
+        self.D_memory = memory.clone()
+
         self.memory_mask = mask
         _,self.N,self.M = memory.size()
 
     def size(self):
-        return self.memory.size()
+        return self.Q_memory.size()
 
     def Read(self, q_t):
         """Read from memory (according to section 3.1)."""
         
-        context,attn_dist,_ = self.attention_read(q_t.transpose(0,1),self.memory,self.memory_mask)
-        return context
+        c1,attn_dist,_ = self.attention_read(q_t.transpose(0,1),self.Q_memory,self.memory_mask)
+        
+        q_t = self.s_context(torch.cat((q_t, c1.transpose(0,1)), -1))
+
+        c2,attn_dist,_ = self.attention_read(q_t.transpose(0,1),self.D_memory,self.memory_mask)
+        
+        q_t = self.s_context(torch.cat((q_t, c2.transpose(0,1)), -1))
+        
+        return q_t,attn_dist,c2
 
     def Write(self,  s_t):
         """write to memory (according to section 3.2)."""
-        self.prev_mem = self.memory
-        self.memory = torch.Tensor(self.size())
+        self.prev_mem = self.Q_memory
+        self.Q_memory = torch.Tensor(self.size())
         _,w,_ = self.attention_read(s_t.transpose(0,1),self.prev_mem,self.memory_mask)
         
         # print(s_t.size(),"s_t")
@@ -1179,5 +1181,5 @@ class NTMMemory(nn.Module):
         U_t = torch.sigmoid(torch.matmul(s_t.transpose(0,1),self.W)).repeat(1,self.N,1)#add
         erase = F_t*w.transpose(1,2)
         add = U_t*w.transpose(1,2)
-        self.memory = self.prev_mem * (1 - erase) + add
+        self.Q_memory = self.prev_mem * (1 - erase) + add
     
