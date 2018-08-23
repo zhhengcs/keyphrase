@@ -383,14 +383,14 @@ class Seq2SeqLSTMAttention(nn.Module):
             # encoder_outputs,encoder_hidden,query_output = self.attention_encoder(input_src,input_src_len,query_src,query_len)
             encoder_outputs,encoder_hidden = self.encode(input_src,input_src_len)
             
-            query_slf_mask = self.get_attn_padding_mask(query_src,query_src)
-            query_emb = self.embedding(query_src)
-            query_outputs,_ = self.slf_attn_layer(query_emb,None,query_slf_mask)
+            # query_slf_mask = self.get_attn_padding_mask(query_src,query_src)
+            # query_emb = self.embedding(query_src)
+            # query_outputs,_ = self.slf_attn_layer(query_emb,None,query_slf_mask)
 
-            doc_mask = self.get_attn_padding_mask(query_src,input_src)
-            query_mask = self.get_attn_padding_mask(input_src,query_src)
+            # doc_mask = self.get_attn_padding_mask(query_src,input_src)
+            # query_mask = self.get_attn_padding_mask(input_src,query_src)
             
-            encoder_outputs,encoder_hidden,query_outputs = self.cross_attn_layer(encoder_outputs,doc_mask,input_src_len,query_outputs,query_mask)
+            # encoder_outputs,encoder_hidden,query_outputs = self.cross_attn_layer(encoder_outputs,doc_mask,input_src_len,query_outputs,query_mask)
             
         elif self.encoder_name == 'BiGRU':
             encoder_outputs, encoder_hidden = self.encode(input_src, input_src_len)
@@ -401,7 +401,8 @@ class Seq2SeqLSTMAttention(nn.Module):
             
             memory_mask = self.get_mask(query_src)
             if self.encoder_name == 'Attention':
-                self.Memory_Decoder.ntm.set_memory(query_outputs,memory_mask)
+                # self.Memory_Decoder.ntm.set_memory(query_outputs,memory_mask)
+                self.Memory_Decoder.ntm.set_memory(encoder_outputs,ctx_mask)
             elif self.encoder_name == 'BiGRU':
                 self.Memory_Decoder.ntm.set_memory(encoder_outputs,ctx_mask)
 
@@ -437,22 +438,22 @@ class Seq2SeqLSTMAttention(nn.Module):
         batch_size,_ = trg_inputs.size()
 
         c_t_1 = Variable(torch.zeros(batch_size, 1, self.ctx_hidden_dim))
+        
         if torch.cuda.is_available() and self.use_gpu:
-            c_t_1.cuda()
+            c_t_1 = c_t_1.cuda()
+            
         
         max_art_oovs = max([len(x) for x in oov_lists])
         if max_art_oovs > 0:
             extra_zeros = Variable(torch.zeros((batch_size, max_art_oovs)))
             if self.use_gpu:
-                extra_zeros.cuda()
+                extra_zeros=extra_zeros.cuda()
         else:
             extra_zeros = None
 
         for di in range(max_dec_len):
 
             y_t_1 = trg_inputs[:, di]
-            # print(y_t_1.size(),'y_t_1.size')
-            # exit(0)
             final_dist, s_t_1,  c_t_1, _, = self.Memory_Decoder(y_t_1, s_t_1,
                                                         encoder_outputs, ctx_mask, c_t_1,
                                                         extra_zeros, enc_batch_extend_vocab)
@@ -462,7 +463,7 @@ class Seq2SeqLSTMAttention(nn.Module):
 
         decoder_probs = torch.stack(decoder_probs,dim=1)
         # decoder_hiddens = 
-        
+        # print(decoder_probs.size())        
         decoder_probs = torch.log(decoder_probs+1e-12)
         
         return decoder_probs,decoder_hiddens,None,None
@@ -478,14 +479,15 @@ class Seq2SeqLSTMAttention(nn.Module):
         batch_size,_ = trg_inputs.size()
 
         c_t_1 = Variable(torch.zeros(batch_size,1,self.ctx_hidden_dim))
+
         if torch.cuda.is_available() and self.use_gpu:
-            c_t_1.cuda()
+            c_t_1 = c_t_1.cuda()
 
         max_art_oovs = max([len(x) for x in oov_lists])
         if max_art_oovs > 0:
             extra_zeros = Variable(torch.zeros((batch_size, max_art_oovs)))
             if self.use_gpu and torch.cuda.is_available():
-                extract_zeros.cuda()
+                extra_zeros=extra_zeros.cuda()
         else:
             extra_zeros = None
       
@@ -1074,8 +1076,6 @@ def init_rnn_wt(rnn):
                 start, end = n // 4, n // 2
                 bias.data.fill_(0.)
                 bias.data[start:end].fill_(1.)
-                # print(name,bias)
-
 
 class MeMDecoder(nn.Module):
     def __init__(self,opt):
@@ -1083,6 +1083,8 @@ class MeMDecoder(nn.Module):
         self.attention_network = Attention(opt.rnn_size,opt.rnn_size)
         self.embedding = nn.Embedding(opt.vocab_size, opt.word_vec_size,padding_idx=opt.word2id[pykp.io.PAD_WORD])
         self.x_context = nn.Linear(opt.rnn_size + opt.rnn_size, opt.rnn_size)
+        self.s_context = nn.Linear(opt.rnn_size+opt.rnn_size,opt.rnn_size)
+
         self.gru1 = nn.GRU(opt.rnn_size,opt.rnn_size,num_layers=1,batch_first=True,bidirectional=False)
         self.gru2 = nn.GRU(opt.rnn_size,opt.rnn_size,num_layers=1,batch_first=True,bidirectional=False)
         init_rnn_wt(self.gru1)
@@ -1091,51 +1093,40 @@ class MeMDecoder(nn.Module):
 
         self.out1 = nn.Linear(opt.rnn_size * 2, opt.rnn_size)
         self.out2 = nn.Linear(opt.rnn_size, opt.vocab_size)
-        # init_linear_wt(self.out1)
-        # init_linear_wt(self.out2)
         self.ntm = NTMMemory(opt)
-        # set_ntm()
     
     def forward(self, y_t_1, s_t_1, encoder_outputs, enc_padding_mask, c_t_1, extra_zeros, enc_batch_extend_vocab):
         y_t_1_embd = self.embedding(y_t_1)
-
+        
         x = self.x_context(torch.cat((c_t_1, y_t_1_embd.unsqueeze(1)), -1))
 
+        # first st
         gru_out, s_t_1_ = self.gru1(x, s_t_1)
-        # print(s_t_1_.size(),'s_t_1_')
-        context_t = self.ntm.Read(s_t_1_)
-        _,s_t = self.gru2(context_t,s_t_1_)
+        
+        for i in range(2):
+            context_t = self.ntm.Read(s_t_1_)
+            _,s_t = self.gru2(context_t,s_t_1_)
+            # s_t = self.s_context(s)
+            self.ntm.Write(s_t)
 
-        self.ntm.Write(s_t)
+
+        #End st
         hidden_dim = s_t.size()[-1]
-        # s_t = s_t.view(-1,hidden_dim)
-        # print(s_t.size(),'s_t_size')
 
         c_t, attn_dist,_ = self.attention_network(s_t.transpose(0,1), encoder_outputs, enc_padding_mask)
-
-        p_gen = None
-        # print(gru_out.size(),'gru out')
-        # print(c_t.size(),'context size')
-
-        output = torch.cat((gru_out.view(-1,hidden_dim*1), c_t.view(-1,hidden_dim*1)), -1) # B x hidden_dim *2
+ 
+        output = torch.cat((s_t.view(-1,hidden_dim*1), c_t.view(-1,hidden_dim*1)), -1) # B x hidden_dim *2
         output = self.out1(output) # B x hidden_dim
         output = F.relu(output)
         output = self.out2(output) # B x vocab_size
         vocab_dist = F.softmax(output, dim=-1)
-        # print(vocab_dist.size(),'vocab dist')
+
         vocab_dist_ = 0.5* vocab_dist
         attn_dist_ = (1 - 0.5) * attn_dist
-        # print(extra_zeros.size(),'extract_zeros')
 
-        if extra_zeros is not None:
-            # print(vocab_dist_.size(),'vocab_dist_ size')
-            # print(extra_zeros.size(),'extra_zeros')
+        if extra_zeros is not None:    
             vocab_dist_ = torch.cat([vocab_dist_, extra_zeros], -1)
         
-        # print(vocab_dist.size(),'vocab dist')
-        # print(vocab_dist.type())
-        # print(enc_batch_extend_vocab.size(),attn_dist_.size())
-        # print(enc_batch_extend_vocab[0])
         seq_len = attn_dist_.size()[-1]
         final_dist = vocab_dist_.scatter_add(1, enc_batch_extend_vocab, attn_dist_.view(-1,seq_len))
         

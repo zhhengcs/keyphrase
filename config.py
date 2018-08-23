@@ -37,9 +37,9 @@ def model_opts(parser):
     Be careful with these as they will be used during translation.
     """
     # Device options
-    parser.add_argument('-use_gpu',default=False,help='Use GPU or not.')
+    parser.add_argument('-use_gpu',default=True,help='Use GPU or not.')
     # Embedding Options
-    parser.add_argument('-word_vec_size', type=int, default=64,
+    parser.add_argument('-word_vec_size', type=int, default=150,
                         help='Word embedding for both.')
 
     parser.add_argument('-position_encoding', action='store_true',
@@ -63,7 +63,7 @@ def model_opts(parser):
     parser.add_argument('-dec_layers', type=int, default=1,
                         help='Number of layers in the decoder')
 
-    parser.add_argument('-rnn_size', type=int, default=64,
+    parser.add_argument('-rnn_size', type=int, default=150,
                         help='Size of LSTM hidden states')
     # parser.add_argument('-input_feed', type=int, default=1,
     #                     help="""Feed the context vector at each time step as

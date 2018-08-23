@@ -330,7 +330,7 @@ def main():
         # opt.train_from = 'model/kp20k.ml.copy.uni-directional.20180817-021054/kp20k.ml.copy.uni-directional.epoch=6.batch=6735.total_batch=57300.model'
         train_data_loader,word2id, id2word, vocab = load_data_vocab(opt)
         model = init_model(opt)
-        
+                
         optimizer_ml, _, criterion = init_optimizer_criterion(model, opt)
         train_model(model, optimizer_ml, _, criterion, train_data_loader,  opt)
     except Exception as e:

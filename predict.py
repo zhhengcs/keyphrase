@@ -151,7 +151,7 @@ def main():
 
     try:
 
-        # opt.train_from = 'model/kp20k.ml.copy.uni-directional.20180821-135347/kp20k.ml.copy.uni-directional.epoch=7.batch=6930.total_batch=84600.model'
+        opt.train_from = 'model/kp20k.ml.copy.uni-directional.20180822-071622/kp20k.ml.copy.uni-directional.epoch=9.batch=1960.total_batch=71000.model'
         test_data_loader, word2id, id2word, vocab = load_data_vocab(opt, load_train=False)
         model = init_model(opt)
 
