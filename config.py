@@ -255,7 +255,7 @@ def train_opts(parser):
                         help="The maximum number of batches to apply scheduled sampling")
 
     # learning rate
-    parser.add_argument('-learning_rate', type=float, default=0.001,
+    parser.add_argument('-learning_rate', type=float, default=0.0005,
                         help="""Starting learning rate.
                         Recommended settings: sgd = 1, adagrad = 0.1,
                         adadelta = 1, adam = 0.001""")
