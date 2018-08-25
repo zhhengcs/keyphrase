@@ -98,7 +98,7 @@ class TopN_heap(object):
         else:
             heapq.heappushpop(self._data, x)
 
-    def extract(self, sort=False):
+    def extract(self, sort=False,topk=None):
         """Extracts all elements from the TopN.
 
         The only method that can be called immediately after extract() is reset().
@@ -113,7 +113,9 @@ class TopN_heap(object):
         data = self._data
         if sort:
             data.sort(reverse=True)
-        return data
+        # if topk == 1:
+        #     return data[0]
+        return data[:topk]
 
     def reset(self):
         """Returns the TopN to an empty state."""
@@ -288,11 +290,8 @@ class SequenceGenerator(object):
                     return_attention=self.return_attention
                 )
             
-
-            # print(log_probs.size(),'logprobs')
-            # print(new_dec_hiddens.size(),'new_dec_hiddens')
             # squeeze these outputs, (hyp_seq_size, trg_len=1, K+1) -> (hyp_seq_size, K+1)
-            probs, words = log_probs.data.topk(self.beam_size + 1, dim=-1)
+            probs, words = log_probs.data.topk(self.beam_size, dim=-1)
             words = words.squeeze(1)
             probs = probs.squeeze(1)
             # (hyp_seq_size, trg_len=1, src_len) -> (hyp_seq_size, src_len)
@@ -321,18 +320,23 @@ class SequenceGenerator(object):
                     flattened_seq_id = flattened_id_map[batch_i][partial_id]
 
                     # check each new beam and decide to add to hypotheses or completed list
-                    for beam_i in range(self.beam_size + 1):
+                    for beam_i in range(self.beam_size):
                         w = words[flattened_seq_id][beam_i]
-                        # if w has appeared before, ignore current hypothese
-                        # if w in partial_seq.vocab:
-                        #     continue
+                        
 
                         # score=0 means this is the first word <BOS>, empty the sentence
                         if partial_seq.score != 0:
                             new_sent = copy.copy(partial_seq.sentence)
                         else:
                             new_sent = []
+                        
+                        # if w has appeared before, ignore current hypothese
+                        if w in new_sent:
+                            continue
+
+                        # print(new_sent,w,w in new_sent)
                         new_sent.append(w)
+
 
                         # if w >= 50000 and len(partial_seq.oov_list)==0:
                         #     print(new_sent)
@@ -373,29 +377,31 @@ class SequenceGenerator(object):
 
                         # if predict EOS, push it into complete_sequences
                         if w == self.eos_id:
+                            
                             if self.length_normalization_factor > 0:
                                 L = self.length_normalization_const
                                 length_penalty = (L + len(new_partial_seq.sentence)) / (L + 1)
+                                # new_partial_seq.score /= len(new_partial_seq.sentence)
+                                # print(new_partial_seq.sentence,len(new_partial_seq.sentence))
                                 new_partial_seq.score /= length_penalty ** self.length_normalization_factor
+                            # print(new_partial_seq.sentence)
+
+                            if len(new_partial_seq.sentence) != len(set(new_partial_seq.sentence)):
+                                print(new_partial_seq.sentence)
+
                             complete_sequences[new_partial_seq.batch_id].push(new_partial_seq)
                         else:
-                            # print('Before pushing[%d]' % new_partial_sequences.size())
-                            # print(sorted([s.score for s in new_partial_sequences._data]))
+                            
                             new_partial_sequences.push(new_partial_seq)
-                            # print('After pushing[%d]' % new_partial_sequences.size())
-                            # print(sorted([s.score for s in new_partial_sequences._data]))
+                            
                             num_new_hyp += 1
                             num_new_hyp_in_batch += 1
-
-                    # print('Finished no.%d partial sequence' % partial_id)
-                    # print('\t#(hypothese) = %d' % (len(new_partial_sequences)))
-                    # print('\t#(completed) = %d' % (sum([len(c) for c in complete_sequences])))
 
                 partial_sequences[batch_i] = new_partial_sequences
                 
                 # print('Batch=%d, \t#(hypothese) = %d, \t#(completed) = %d \t #(new_hyp_explored)=%d' % (batch_i, len(partial_sequences[batch_i]), len(complete_sequences[batch_i]), num_new_hyp_in_batch))
                 
-        # exit(0)        
+              
         # If we have no complete sequences then fall back to the partial sequences.
         # But never output a mixture of complete and partial sequences because a
         # partial sequence could have a higher score than all the complete
@@ -406,8 +412,9 @@ class SequenceGenerator(object):
         for batch_i in range(batch_size):
             if len(complete_sequences[batch_i]) == 0:
                 complete_sequences[batch_i] = partial_sequences[batch_i]
-            complete_sequences[batch_i] = complete_sequences[batch_i].extract(sort=True)
+            complete_sequences[batch_i] = complete_sequences[batch_i].extract(sort=True,topk=100)
 
+        # print(complete_sequences[0][0])
         return complete_sequences
 
     

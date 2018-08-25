@@ -28,9 +28,10 @@ class Attention(nn.Module):
     def __init__(self, enc_dim, trg_dim, method='general'):
         super(Attention, self).__init__()
         self.method = method
-
+        
         if self.method == 'general':
             self.attn = nn.Linear(enc_dim, trg_dim)
+
         elif self.method == 'concat':
             attn = nn.Linear(enc_dim + trg_dim, trg_dim)
             v = nn.Linear(trg_dim, 1)
@@ -59,7 +60,7 @@ class Attention(nn.Module):
             # hidden (batch, trg_len, trg_hidden_dim) * encoder_outputs (batch, src_len, src_hidden_dim).transpose(1, 2) -> (batch, trg_len, src_len)
             energies = torch.bmm(hiddens, encoder_outputs.transpose(1, 2))  # (batch, trg_len, src_len)
         elif self.method == 'general':
-            # print(encoder_outputs.type(),encoder_outputs.size())
+            
             energies = self.attn(encoder_outputs)  # (batch, src_len, trg_hidden_dim)
             if encoder_mask is not None:
                 energies =  energies * encoder_mask.view(encoder_mask.size(0), encoder_mask.size(1), 1)
@@ -123,6 +124,7 @@ class Attention(nn.Module):
         trg_hidden_dim = hidden.size(2)
 
         # hidden (batch_size, trg_len, trg_hidden_dim) * encoder_outputs (batch, src_len, src_hidden_dim).transpose(1, 2) -> (batch, trg_len, src_len)
+        
         attn_energies = self.score(hidden, encoder_outputs)
 
         # Normalize energies to weights in range 0 to 1, with consideration of masks
@@ -223,7 +225,7 @@ class Seq2SeqLSTMAttention(nn.Module):
 
         self.use_gpu = opt.use_gpu
         self.encoder_name = 'BiGRU' # BiGRU or Attention
-        self.decoder_name = 'Memory Network' #CopyRNN or Memory Network
+        self.decoder_name = 'CopyRNN' #CopyRNN or Memory Network
 
         if self.scheduled_sampling:
             logging.info("Applying scheduled sampling with %s decay for the first %d batches" % (self.scheduled_sampling_type, self.scheduled_sampling_batches))
@@ -259,8 +261,8 @@ class Seq2SeqLSTMAttention(nn.Module):
             batch_first=False,
             dropout=self.dropout
         )
-
-        self.attention_layer = Attention(self.src_hidden_dim * self.num_directions, self.trg_hidden_dim, method=self.attention_mode)
+        self.decoder2vocab = nn.Linear(self.trg_hidden_dim, self.vocab_size)
+        self.attention_layer = Attention(self.src_hidden_dim *1, self.trg_hidden_dim, method=self.attention_mode)
 
         self.encoder2decoder = nn.Linear(
             self.src_hidden_dim * self.num_directions,
@@ -275,7 +277,7 @@ class Seq2SeqLSTMAttention(nn.Module):
             assert self.unk_word != None
             logging.info("Applying Copy Mechanism, type=%s" % self.copy_mode)
             # for Gu's model
-            self.copy_attention_layer = Attention(self.src_hidden_dim * self.num_directions, self.trg_hidden_dim, method=self.copy_mode)
+            self.copy_attention_layer = Attention(self.src_hidden_dim * 1, self.trg_hidden_dim, method=self.copy_mode)
             # for See's model
             # self.copy_gate            = nn.Linear(self.trg_hidden_dim, self.vocab_size)
         else:
@@ -447,7 +449,7 @@ class Seq2SeqLSTMAttention(nn.Module):
             # print('-----------------step %d--------------------'%di)
 
         decoder_probs = torch.stack(decoder_probs,dim=1)
-   
+        # print(decoder_probs.size())
         decoder_probs = torch.log(decoder_probs+1e-12)
         
         return decoder_probs,decoder_hiddens,None,None
@@ -589,7 +591,7 @@ class Seq2SeqLSTMAttention(nn.Module):
         self.current_batch += 1
         # because sequence-wise training is not compatible with input-feeding, so discard it
         # TODO 20180722, do_word_wisely_training=True is buggy
-        do_word_wisely_training = False
+        do_word_wisely_training = True
         if not do_word_wisely_training:
             '''
             Teacher Forcing
@@ -785,11 +787,12 @@ class Seq2SeqLSTMAttention(nn.Module):
 
         # apply log softmax to normalize, ensuring it meets the properties of probability, (batch_size * trg_len, src_len)
         flattened_decoder_logits = torch.nn.functional.log_softmax(flattened_decoder_logits, dim=1)
+        # flattened_decoder_probs = torch.nn.functional.softmax(flattened_decoder_logits,dim=-1)
 
         # reshape to batch first before returning (batch_size, trg_len, src_len)
         decoder_log_probs = flattened_decoder_logits.view(batch_size, max_length, self.vocab_size + max_oov_number)
-
-        return decoder_log_probs
+        # decoder_probs = flattened_decoder_probs.view(batch_size,max_length,self.vocab_size+max_oov_number)
+        return decoder_log_probs#,decoder_probs
 
     def do_teacher_forcing(self):
         if self.scheduled_sampling:
@@ -1085,7 +1088,7 @@ class MeMDecoder(nn.Module):
         # first st
         gru_out, s_t = self.gru1(x, s_t_1)
         
-        for i in range(2):
+        for i in range(1):
             s_t,attn_dist,c_t = self.ntm.Read(s_t)
                 # _,s_t = self.gru2(context_t,s_t)
 

@@ -88,7 +88,7 @@ def model_opts(parser):
                         help="whether the encoder is bidirectional")
 
     # Attention options
-    parser.add_argument('-attention_mode', type=str, default='concat',
+    parser.add_argument('-attention_mode', type=str, default='general',
                         choices=['dot', 'general', 'concat'],
                         help="""The attention type to use:
                         dot or general (Luong) or concat (Bahdanau)""")
@@ -97,7 +97,7 @@ def model_opts(parser):
     parser.add_argument('-copy_attention', action="store_true",default=True,
                         help='Train a copy model.')
 
-    parser.add_argument('-copy_mode', type=str, default='concat',
+    parser.add_argument('-copy_mode', type=str, default='general',
                         choices=['dot', 'general', 'concat'],
                         help="""The attention type to use: dot or general (Luong) or concat (Bahdanau)""")
 
@@ -170,6 +170,9 @@ def train_opts(parser):
     parser.add_argument('-data', default='data/AAAI/kp20k',
                         help="""Path prefix to the ".train.pt" and
                         ".valid.pt" file path from preprocess.py""")
+    parser.add_argument('-word_or_phrase', default='phrase', type=str,
+                        help="""generate keyword or keyphrase""")
+
     parser.add_argument('-vocab', default='data/AAAI/kp20k',
                         help="""Path prefix to the ".vocab.pt"
                         file path from preprocess.py""")
@@ -216,7 +219,7 @@ def train_opts(parser):
                         help="Fix word embeddings on the encoder side.")
 
     # Optimization options
-    parser.add_argument('-batch_size', type=int, default=200,
+    parser.add_argument('-batch_size', type=int, default=100,
                         help='Maximum batch size')
     parser.add_argument('-batch_workers', type=int, default=4,
                         help='Number of workers for generating batches')
@@ -304,7 +307,7 @@ def train_opts(parser):
                         help="Path of checkpoints.")
 
     # beam search setting
-    parser.add_argument('-beam_batch', type=int, default=10,
+    parser.add_argument('-beam_batch', type=int, default=5,
                         help='beam_batch')
 
     parser.add_argument('-beam_search_batch_example', type=int, default=100,
@@ -316,7 +319,7 @@ def train_opts(parser):
 
     parser.add_argument('-beam_size',  type=int, default=30,
                         help='Beam size')
-    parser.add_argument('-max_sent_length', type=int, default=6,
+    parser.add_argument('-max_sent_length', type=int, default=10,
                         help='Maximum sentence length.')
 
 def predict_opts(parser):

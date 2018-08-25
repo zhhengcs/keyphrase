@@ -18,7 +18,7 @@ from train import load_data_vocab, init_model, init_optimizer_criterion
 from utils import Progbar, plot_learning_curve
 
 import pykp
-from pykp.dataloader import KeyphraseDataLoader,KeyphraseDataset,BucketIterator
+from pykp.dataloader import KeyphraseDataset,BucketIterator
 from pykp.model import Seq2SeqLSTMAttention, Seq2SeqLSTMAttentionCascading
 
 __author__ = "Rui Meng"
@@ -40,14 +40,14 @@ def load_data_vocab(opt, load_train=False):
     opt.id2word = id2word
     opt.vocab = vocab
     
-    test_one2many_loader = BucketIterator('./data/AAAI/kp20k.test.one2many.json',word2id,id2word,
+    test_one2many_loader = BucketIterator('./data/AAAI/small_test.json',word2id,id2word,
                                             batch_size=opt.beam_batch,
                                             include_original=True,
-                                            mode='test',
+                                            mode='keyword',
                                             repeat=False,
-                                            sort=False,
+                                            sort=True,
                                             shuffle=False,
-                                            length=18601)
+                                            length=2000)
     
 
 
@@ -139,9 +139,9 @@ def main():
 
     logging = config.init_logging(logger_name=None, log_file=opt.exp_path + '/output.log', stdout=True)
 
-
+    opt.use_gpu = True
     try:
-        # opt.train_from = 'model/kp20k.ml.copy.bi-directional.20180823-033739/kp20k.ml.copy.bi-directional.epoch=1.batch=500.total_batch=500.model'
+        # opt.train_from = 'model/kp20k.ml.copy.bi-directional.20180824-222135/kp20k.ml.copy.bi-directional.epoch=9.batch=159.total_batch=1439.model'
         test_data_loader, word2id, id2word, vocab = load_data_vocab(opt, load_train=False)
         model = init_model(opt)
 

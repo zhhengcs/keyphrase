@@ -26,7 +26,7 @@ from torch import cuda
 
 from beam_search import SequenceGenerator
 from evaluate import evaluate_beam_search, get_match_result, self_redundancy
-from pykp.dataloader import KeyphraseDataLoader
+
 from utils import Progbar, plot_learning_curve
 
 import pykp
@@ -34,7 +34,7 @@ from pykp.io import KeyphraseDataset
 from pykp.model import Seq2SeqLSTMAttention, Seq2SeqLSTMAttentionCascading
 from pykp.dataloader import BucketIterator,KeyphraseDataset
 import time
-
+import re
 
 
 __author__ = "Rui Meng"
@@ -136,14 +136,14 @@ def train_model(model, optimizer_ml, optimizer_rl, criterion, train_data_loader,
                 t = time.time()
                 print('Training: Epoch=%d - %d/%d loss:%.4f,cost %fs'%(epoch,batch_i,batch_per_epoch,loss_ml,t-st))
                 st = t
-            if total_batch > 1 and total_batch % opt.save_model_every  == 0:  # epoch >= opt.start_checkpoint_at and
-                # Save the checkpoint
+            # if total_batch > 1 and total_batch % opt.save_model_every  == 0:  # epoch >= opt.start_checkpoint_at and
+            # Save the checkpoint
                 
-                save_dir = os.path.join(opt.model_path, '%s.epoch=%d.batch=%d.total_batch=%d' % (opt.exp, epoch, batch_i, total_batch) + '.model')
-                try:
-                    torch.save(model.state_dict(),open(save_dir, 'wb'))
-                except:
-                    pass
+        save_dir = os.path.join(opt.model_path, '%s.epoch=%d.batch=%d.total_batch=%d' % (opt.exp, epoch, batch_i, total_batch) + '.model')
+        try:
+            torch.save(model.state_dict(),open(save_dir, 'wb'))
+        except:
+            pass
 
 
         # evaluate_per_epoch(model,eval_dataloader,opt)
@@ -160,17 +160,18 @@ def load_data_vocab(opt, load_train=True):
     logging.info('======================  Dataset  =========================')
     # one2many data loader
     if load_train:
-        train_one2one_loader = BucketIterator('./data/AAAI/kp20k.train.one2one.json',word2id,id2word,
-                                            batch_size=opt.batch_size,
-                                            repeat=False,sort=True,shuffle=False,length=2588873)
+        train_one2one_loader = BucketIterator('./data/AAAI/kp20k.test.one2one.json',word2id,id2word,
+                                            batch_size=opt.batch_size,mode='keyword',
+                                            repeat=False,sort=True,shuffle=False,length=20000)
+        
         test_one2many_loader = BucketIterator('./data/AAAI/small_test.json',word2id,id2word,
                                             batch_size=opt.beam_batch,
                                             include_original=True,
-                                            mode='test',
+                                            mode='keyword',
                                             repeat=False,
                                             sort=False,
                                             shuffle=False,
-                                            length=200)
+                                            length=2000)
 
         logging.info('#(train data size:  #(one2one pair)=%d, #(batch)=%d' % (len(train_one2one_loader), len(train_one2one_loader) / train_one2one_loader.batch_size))
     else:	
@@ -321,7 +322,13 @@ def evaluate_per_epoch(model,eval_dataloader,opt):
                                       beam_size=opt.beam_size,
                                       max_sequence_length=opt.max_sent_length,
                                       )
-    evaluate_beam_search(generator, eval_dataloader, opt, title='predict', save_path=opt.pred_path + '/[epoch=%d,batch=%d,total_batch=%d]test_result.csv' % (0, 0, 0))
+
+    model_path = opt.train_from.split('/')[-1]
+    _, epoch, batch, total_batch = re.findall('\d+', model_path)
+
+    evaluate_beam_search(generator, test_data_loader, opt, title='predict',
+                     save_path=opt.pred_path + '/epoch=%s,batch=%s,total_batch=%s' % (epoch, batch, total_batch))
+    
 
 def main():
     # load settings for training
@@ -342,9 +349,8 @@ def main():
 
     logging = config.init_logging(logger_name=None, log_file=opt.exp_path + '/output.log', stdout=True)
     try:
-        # print(opt.bidirectional)
-        # exit(0)
-        # opt.train_from = 'model/kp20k.ml.copy.uni-directional.20180817-021054/kp20k.ml.copy.uni-directional.epoch=6.batch=6735.total_batch=57300.model'
+       
+        # opt.train_from = 'model/kp20k.ml.copy.bi-directional.20180823-220909/kp20k.ml.copy.bi-directional.epoch=1.batch=9900.total_batch=9900.model'
         train_data_loader,word2id, id2word, vocab,eval_dataloader = load_data_vocab(opt)
         model = init_model(opt)
                 

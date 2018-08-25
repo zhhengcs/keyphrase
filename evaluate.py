@@ -8,7 +8,7 @@ import scipy
 import torch
 from nltk.stem.porter import *
 import numpy as np
-from collections import Counter
+from collections import Counter,defaultdict
 
 import os
 
@@ -35,19 +35,14 @@ def process_predseqs(pred_seqs, oov, id2word, opt):
     if_valid = []
 
     for seq in pred_seqs:
-        # print('-' * 50)
-        # print('seq.sentence: ' + str(seq.sentence))
-        # print('oov: ' + str(oov))
-        #
-        # for x in seq.sentence[:-1]:
-        #     if x >= opt.vocab_size and len(oov)==0:
-        #         print('ERROR')
 
         # convert to words and remove the EOS token
+
         seq_sentence_np = [int(x.cpu().data.numpy()) for x in seq.sentence]
         processed_seq = [id2word[x] if x < opt.vocab_size else oov[x - opt.vocab_size] for x in seq_sentence_np[:-1]]
         # print('processed_seq: ' + str(processed_seq))
-
+        
+        # 
         # print('%s - %s' % (str(seq.sentence[:-1]), str(processed_seq)))
 
         keep_flag = True
@@ -131,101 +126,184 @@ def if_present_duplicate_phrase(src_str, phrase_seqs):
     return present_index
 
 
+def match_pred_and_true(src_str,true_seqs,pred_seqs,do_stem = True,sample_idx =None):
+    if do_stem:
+        pred_seqs = pred_seqs[0]
+        
+        true_seqs = stem_word_list(true_seqs)
+        pred_seqs = stem_word_list(pred_seqs)
+
+    if len(set(pred_seqs)) != len(pred_seqs):
+            print(pred_seqs)
+    match_score = np.asarray([0.0] * len(pred_seqs), dtype='float32')
+    
+    fw = open('result/predict_results.'+str(sample_idx),'w')
+
+    src_str = ' '.join(src_str)
+    fw.write('Article\t')
+    fw.write(src_str)
+    fw.write('\n')
+
+    fw.write('Target phrase:\t')
+    t_s = ' '.join(true_seqs)
+    fw.write(t_s)
+    fw.write('\n')
+
+    fw.write('Pred phrase:\t')
+    p_s = ' '.join(pred_seqs)
+    fw.write(p_s)
+    fw.write('\n')
+    fw.write('\n')
+    fw.close()
+
+    for idx,w in enumerate(pred_seqs):
+        match = False
+        for ww in true_seqs:
+            if w == ww:
+                match = True
+                break
+        if match:
+            match_score[idx] = 1.0
+
+    p_5 = sum(match_score[:5])/5.0
+    r_5 = sum(match_score[:5])*1.0/len(true_seqs)
+    
+
+    if p_5 + r_5 == 0:
+        f_5 = 0
+    else:
+        f_5 = 2*p_5*r_5/(r_5+p_5)
+
+    
+    p_10 = sum(match_score[:10])/10.0
+    r_10 = sum(match_score[:10])*1.0/len(true_seqs)
+    
+    if p_10 + r_10 == 0:
+        f_10 = 0
+    else:
+        f_10 = 2 * p_10*r_10/(p_10+r_10)
+
+    return p_5,r_5,f_5,p_10,r_10,f_10
+
 def evaluate_beam_search(generator, data_loader, opt, title='', epoch=1, save_path=None):
     logging = config.init_logging(title, save_path + '/%s.log' % title)
     progbar = Progbar(logger=logging, title=title, target=len(data_loader)/opt.beam_batch, batch_size=opt.beam_batch,
                       total_examples=len(data_loader)/opt.beam_batch)
 
-    example_idx = 0
-    score_dict = {}  # {'precision@5':[],'recall@5':[],'f1score@5':[], 'precision@10':[],'recall@10':[],'f1score@10':[]}
+    beam_batch_idx = 0
+    score_dict = defaultdict(list)  # {'precision@5':[],'recall@5':[],'f1score@5':[], 'precision@10':[],'recall@10':[],'f1score@10':[]}
 
+    sample_idx = 0
     for i, batch in enumerate(data_loader):
         # if i > 3:
         #     break
-
-        one2many_batch = batch
-        src_list, src_len, trg_list, _, trg_copy_target_list, src_oov_map_list, oov_list, src_str_list, trg_str_list = one2many_batch
-
+        
+        if opt.word_or_phrase == 'word':
+            src_list, src_len, trg_list, _, trg_copy_target_list, src_oov_map_list, oov_list, src_str_list, trg_str_list = batch
+        else:
+            src_list, src_len, trg_list, _, trg_copy_target_list, src_oov_map_list, oov_list, src_str_list, trg_str_list = batch
+        
         if torch.cuda.is_available() and opt.use_gpu:
             src_list = src_list.cuda()
             src_oov_map_list = src_oov_map_list.cuda()
         
         pred_seq_list = generator.beam_search(src_list, src_len, src_oov_map_list, oov_list, opt.word2id)
         
+        # print(processed_seqs)
         
+        # print(processed_scores)
+        if opt.word_or_phrase == 'phrase':
+            for src, src_str, trg, trg_str_seqs, trg_copy, pred_seq, oov in zip(src_list, src_str_list, trg_list, trg_str_list, trg_copy_target_list, pred_seq_list, oov_list):
+                # logging.info('======================  %d =========================' % (beam_batch_idx))
+                
+                # print(trg_str_seqs)
+                # print(src_str)
+                trg_str_is_present = if_present_duplicate_phrase(src_str, trg_str_seqs)
+                
+                # print(trg_str_is_present)
+                # 1st filtering
+                pred_is_valid, processed_pred_seqs, processed_pred_str_seqs, processed_pred_score = process_predseqs(pred_seq, oov, opt.id2word, opt)
+                
+                # 2nd filtering: if filter out phrases that don't appear in text, and keep unique ones after stemming
+                
+                if opt.must_appear_in_src is True:
+                    pred_is_present = if_present_duplicate_phrase(src_str, processed_pred_str_seqs)
+                    trg_str_seqs = np.asarray(trg_str_seqs)[trg_str_is_present]
+                else:
+                    pred_is_present = [True] * len(processed_pred_str_seqs)
+                    # print(pred_is_present)
+                valid_and_present = np.asarray(pred_is_valid) * np.asarray(pred_is_present)
+
+                match_list = get_match_result(true_seqs=trg_str_seqs, pred_seqs=processed_pred_str_seqs)
+                
+
+                '''
+                Evaluate predictions w.r.t different filterings and metrics
+                '''
+                num_oneword_range = [-1, 1]
+                topk_range = [5, 10]
+                score_names = ['precision', 'recall', 'f_score']
+
+                processed_pred_seqs = np.asarray(processed_pred_seqs)[valid_and_present]
+                processed_pred_str_seqs = np.asarray(processed_pred_str_seqs)[valid_and_present]
+                processed_pred_score = np.asarray(processed_pred_score)[valid_and_present]
+
+                for num_oneword_seq in num_oneword_range:
+                    # 3rd round filtering (one-word phrases)
+                    filtered_pred_seq, filtered_pred_str_seqs, filtered_pred_score = post_process_predseqs((processed_pred_seqs, processed_pred_str_seqs, processed_pred_score), num_oneword_seq)
+
+                    match_list = get_match_result(true_seqs=trg_str_seqs, pred_seqs=filtered_pred_str_seqs)
+
+                    assert len(filtered_pred_seq) == len(filtered_pred_str_seqs) == len(filtered_pred_score) == len(match_list)
+
+                    for topk in topk_range:
+                        results = evaluate(match_list, filtered_pred_seq, trg_str_seqs, topk=topk)
+                        for k, v in zip(score_names, results):
+                            if '%s@%d#oneword=%d' % (k, topk, num_oneword_seq) not in score_dict:
+                                score_dict['%s@%d#oneword=%d' % (k, topk, num_oneword_seq)] = []
+                            score_dict['%s@%d#oneword=%d' % (k, topk, num_oneword_seq)].append(v)
+
+
+        
+        if opt.word_or_phrase == 'word':
+            
+            for trg_str_seq, pred_seq, oov,src_str in zip(trg_str_list, pred_seq_list, oov_list,src_str_list):
+                _,_, processed_pred_str_seqs,_ = process_predseqs(pred_seq, oov, opt.id2word, opt)
+                p_5,r_5,f_5,p_10,r_10,f_10 = match_pred_and_true(src_str = src_str,true_seqs=trg_str_seq, pred_seqs=processed_pred_str_seqs,sample_idx=sample_idx)
+                sample_idx += 1
+                score_dict['f_score@5#oneword=-1'].append(f_5)
+                score_dict['precision@5#oneword=-1'].append(p_5)
+                score_dict['recall@5#oneword=-1'].append(r_5)
+
+                score_dict['f_score@10#oneword=-1'].append(f_10)
+                score_dict['precision@10#oneword=-1'].append(p_10)
+                score_dict['recall@10#oneword=-1'].append(r_10)
+
+        
+        if beam_batch_idx%10 == 0:
+            
+            print('#(precision@5#oneword=-1)=%d, avg=%f' % (len(score_dict['precision@5#oneword=-1']), np.average(score_dict['precision@5#oneword=-1'])))
+            print('#(precision@10#oneword=-1)=%d, avg=%f' % (len(score_dict['precision@10#oneword=-1']), np.average(score_dict['precision@10#oneword=-1'])))
+        
+            print('#(recall@5#oneword=-1)=%d, avg=%f' % (len(score_dict['recall@5#oneword=-1']), np.average(score_dict['recall@5#oneword=-1'])))
+            print('#(recall@10#oneword=-1)=%d, avg=%f' % (len(score_dict['recall@10#oneword=-1']), np.average(score_dict['recall@10#oneword=-1'])))
+            
+            x,y = np.average(score_dict['f_score@5#oneword=-1']),np.average(score_dict['f_score@10#oneword=-1'])
+            
+            print('#(f_score@5#oneword=-1)=%d, avg=%f' % (len(score_dict['f_score@5#oneword=-1']), x))
+            print('#(f_score@10#oneword=-1)=%d, avg=%f' % (len(score_dict['f_score@10#oneword=-1']), y))
+
+            progbar.update(epoch, beam_batch_idx, [('f_score@5#oneword=-1', x),('f_score@10#oneword=-1', y)])
+
+            print('*'*50)
+        beam_batch_idx += 1
+
         '''
         process each example in current batch
-        '''
-        for src, src_str, trg, trg_str_seqs, trg_copy, pred_seq, oov in zip(src_list, src_str_list, trg_list, trg_str_list, trg_copy_target_list, pred_seq_list, oov_list):
-            # logging.info('======================  %d =========================' % (example_idx))
-            
-            # print(trg_str_seqs)
-            # print(src_str)
-            trg_str_is_present = if_present_duplicate_phrase(src_str, trg_str_seqs)
-            
-            # print(trg_str_is_present)
-            # 1st filtering
-            pred_is_valid, processed_pred_seqs, processed_pred_str_seqs, processed_pred_score = process_predseqs(pred_seq, oov, opt.id2word, opt)
-            # print(len(processed_pred_str_seqs))
-            # 2nd filtering: if filter out phrases that don't appear in text, and keep unique ones after stemming
-            # print(opt.must_appear_in_src)
-            if opt.must_appear_in_src is True:
-                pred_is_present = if_present_duplicate_phrase(src_str, processed_pred_str_seqs)
-                trg_str_seqs = np.asarray(trg_str_seqs)[trg_str_is_present]
-            else:
-                pred_is_present = [True] * len(processed_pred_str_seqs)
-                # print(pred_is_present)
-            valid_and_present = np.asarray(pred_is_valid) * np.asarray(pred_is_present)
-
-            match_list = get_match_result(true_seqs=trg_str_seqs, pred_seqs=processed_pred_str_seqs)
+        '''        
+        
             
 
-            '''
-            Evaluate predictions w.r.t different filterings and metrics
-            '''
-            num_oneword_range = [-1, 1]
-            topk_range = [5, 10]
-            score_names = ['precision', 'recall', 'f_score']
-
-            processed_pred_seqs = np.asarray(processed_pred_seqs)[valid_and_present]
-            processed_pred_str_seqs = np.asarray(processed_pred_str_seqs)[valid_and_present]
-            processed_pred_score = np.asarray(processed_pred_score)[valid_and_present]
-
-            for num_oneword_seq in num_oneword_range:
-                # 3rd round filtering (one-word phrases)
-                filtered_pred_seq, filtered_pred_str_seqs, filtered_pred_score = post_process_predseqs((processed_pred_seqs, processed_pred_str_seqs, processed_pred_score), num_oneword_seq)
-
-                match_list = get_match_result(true_seqs=trg_str_seqs, pred_seqs=filtered_pred_str_seqs)
-
-                assert len(filtered_pred_seq) == len(filtered_pred_str_seqs) == len(filtered_pred_score) == len(match_list)
-
-                for topk in topk_range:
-                    results = evaluate(match_list, filtered_pred_seq, trg_str_seqs, topk=topk)
-                    for k, v in zip(score_names, results):
-                        if '%s@%d#oneword=%d' % (k, topk, num_oneword_seq) not in score_dict:
-                            score_dict['%s@%d#oneword=%d' % (k, topk, num_oneword_seq)] = []
-                        score_dict['%s@%d#oneword=%d' % (k, topk, num_oneword_seq)].append(v)
-
-
-            if example_idx%100 == 0:
-                print('#(precision@5#oneword=-1)=%d, avg=%f' % (len(score_dict['precision@5#oneword=-1']), np.average(score_dict['precision@5#oneword=-1'])))
-                print('#(precision@10#oneword=-1)=%d, avg=%f' % (len(score_dict['precision@10#oneword=-1']), np.average(score_dict['precision@10#oneword=-1'])))
-            
-                print('#(recall@5#oneword=-1)=%d, avg=%f' % (len(score_dict['recall@5#oneword=-1']), np.average(score_dict['recall@5#oneword=-1'])))
-                print('#(recall@10#oneword=-1)=%d, avg=%f' % (len(score_dict['recall@10#oneword=-1']), np.average(score_dict['recall@10#oneword=-1'])))
-                
-                x,y = np.average(score_dict['f_score@5#oneword=-1']),np.average(score_dict['f_score@10#oneword=-1'])
-                print('#(f_score@5#oneword=-1)=%d, avg=%f' % (len(score_dict['f_score@5#oneword=-1']), x))
-                print('#(f_score@10#oneword=-1)=%d, avg=%f' % (len(score_dict['f_score@10#oneword=-1']), y))
-
-                progbar.update(epoch, example_idx, [('f_score@5#oneword=-1', x),('f_score@10#oneword=-1', y)])
-
-                print('*'*50)
-            example_idx += 1
-
-            
-           
-        # exit(0)
     print('#(f_score@5#oneword=-1)=%d, avg=%f' % (len(score_dict['f_score@5#oneword=-1']), np.average(score_dict['f_score@5#oneword=-1'])))
     print('#(f_score@10#oneword=-1)=%d, avg=%f' % (len(score_dict['f_score@10#oneword=-1']), np.average(score_dict['f_score@10#oneword=-1'])))
     # print('#(f_score@5#oneword=1)=%d, avg=%f' % (len(score_dict['f_score@5#oneword=1']), np.average(score_dict['f_score@5#oneword=1'])))
@@ -248,8 +326,8 @@ def evaluate_beam_search(generator, data_loader, opt, title='', epoch=1, save_pa
 
 
 def stem_word_list(word_list):
+    
     return [stemmer.stem(w.strip().lower()) for w in word_list]
-
 
 def macro_averaged_score(precisionlist, recalllist):
     precision = np.average(precisionlist)
@@ -258,7 +336,6 @@ def macro_averaged_score(precisionlist, recalllist):
     if(precision or recall):
         f_score = round((2 * (precision * recall)) / (precision + recall), 2)
     return precision, recall, f_score
-
 
 def get_match_result(true_seqs, pred_seqs, do_stem=True, type='exact'):
     '''
@@ -281,6 +358,7 @@ def get_match_result(true_seqs, pred_seqs, do_stem=True, type='exact'):
 
     # convert target index into string
     if do_stem:
+
         true_seqs = [stem_word_list(seq) for seq in true_seqs]
         pred_seqs = [stem_word_list(seq) for seq in pred_seqs]
 
