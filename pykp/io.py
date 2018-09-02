@@ -13,10 +13,12 @@ from collections import defaultdict
 import numpy as np
 import sys
 from torch.autograd import Variable
-
+from nltk.corpus import stopwords
+stopwords = stopwords.words('english')
 import torch.multiprocessing as multiprocessing
 import threading
 
+english_punctuations = ["'",'"',',', '.', ':', ';', '?', '(', ')', '[', ']', '&', '!', '*', '@', '#', '$', '%']
 
 __author__ = "Rui Meng"
 __email__ = "rui.meng@pitt.edu"
@@ -29,7 +31,6 @@ UNK_WORD = '<unk>'
 BOS_WORD = '<s>'
 EOS_WORD = '</s>'
 DIGIT = '<digit>'
-
 
 def __getstate__(self):
     return dict(self.__dict__, stoi=dict(self.stoi))
@@ -175,30 +176,6 @@ class KeyphraseDataset(torch.utils.data.Dataset):
             return (src_o2m, src_o2m_len, trg_o2m, None, trg_copy_target_o2m, src_oov_o2m, oov_lists_o2m), (src_o2o, src_o2o_len, trg_o2o, trg_target_o2o, trg_copy_target_o2o, src_oov_o2o, oov_lists_o2o)
 
 
-class KeyphraseDatasetTorchText(torchtext.data.Dataset):
-    @staticmethod
-    def sort_key(ex):
-        return torchtext.data.interleave_keys(len(ex.src), len(ex.trg))
-
-    def __init__(self, raw_examples, fields, **kwargs):
-        """Create a KeyphraseDataset given paths and fields. Modified from the TranslationDataset
-
-        Arguments:
-            examples: The list of raw examples in the dataset, each example is a tuple of two lists (src_tokens, trg_tokens)
-            fields: A tuple containing the fields that will be used for source and target data.
-            Remaining keyword arguments: Passed to the constructor of data.Dataset.
-        """
-        if not isinstance(fields[0], (tuple, list)):
-            fields = [('src', fields[0]), ('trg', fields[1])]
-
-        examples = []
-        for (src_tokens, trg_tokens) in raw_examples:
-            examples.append(torchtext.data.Example.fromlist(
-                [src_tokens, trg_tokens], fields))
-
-        super(KeyphraseDatasetTorchText, self).__init__(examples, fields, **kwargs)
-
-
 def load_json_data(path, name='kp20k', src_fields=['title', 'abstract'], trg_fields=['keyword'], trg_delimiter=';'):
     '''
     To load keyphrase data from file, generate src by concatenating the contents in src_fields
@@ -222,8 +199,9 @@ def load_json_data(path, name='kp20k', src_fields=['title', 'abstract'], trg_fie
 
             trg_strs = []
             src_str = '.'.join([json_[f] for f in src_fields])
+            query_str = json_['title']
             [trg_strs.extend(re.split(trg_delimiter, json_[f])) for f in trg_fields]
-            src_trgs_pairs.append((src_str, trg_strs))
+            src_trgs_pairs.append((src_str, trg_strs,query_str))
 
     return src_trgs_pairs
 
@@ -245,7 +223,7 @@ def copyseq_tokenize(text):
 
     # replace the digit terms with <digit>
     tokens = [w if not re.match('^\d+$', w) else DIGIT for w in tokens]
-
+    
     return tokens
 
 
@@ -261,11 +239,21 @@ def tokenize_filter_data(src_trgs_pairs, tokenize, opt, valid_check=False):
     :return:
     '''
     return_pairs = []
-    for idx, (src, trgs) in enumerate(src_trgs_pairs):
+    for idx, (src, trgs,query) in enumerate(src_trgs_pairs):
         src_filter_flag = False
 
         src = src.lower() if opt.lower else src
+        query = query.lower()
+        
         src_tokens = tokenize(src)
+        src_tokens = [w  for w in src_tokens if w not in stopwords and w not in english_punctuations]
+
+        query_tokens = query.split()
+        query_tokens = [w  for w in query_tokens if w not in stopwords and w not in english_punctuations]
+
+        if len(query_tokens) == 0 or len(src_tokens) == 0:
+            continue
+
         if opt.src_seq_length_trunc and len(src) > opt.src_seq_length_trunc:
             src_tokens = src_tokens[:opt.src_seq_length_trunc]
 
@@ -277,7 +265,7 @@ def tokenize_filter_data(src_trgs_pairs, tokenize, opt, valid_check=False):
 
         if valid_check and src_filter_flag:
             continue
-
+        #?
         trgs_tokens = []
         for trg in trgs:
             trg_filter_flag = False
@@ -316,33 +304,20 @@ def tokenize_filter_data(src_trgs_pairs, tokenize, opt, valid_check=False):
                     filtered_by_heuristic_rule = True
 
             if valid_check and (trg_filter_flag or filtered_by_heuristic_rule):
-                # print('*' * 50)
-                # if filtered_by_heuristic_rule:
-                #     print('INVALID by heuristic_rule')
-                # else:
-                #     print('VALID by heuristic_rule')
-                # print('length of src/trg exceeds limit: len(src)=%d, len(trg)=%d' % (len(src_tokens), len(trg_tokens)))
-                # print('src: %s' % str(src))
-                # print('trg: %s' % str(trg))
-                # print('*' * 50)
                 continue
 
             # FILTER 5: filter keywords like primary 75v05;secondary 76m10;65n30
             if (len(trg_tokens) > 0 and re.match(r'\d\d[a-zA-Z\-]\d\d', trg_tokens[0].strip())) or (len(trg_tokens) > 1 and re.match(r'\d\d\w\d\d', trg_tokens[1].strip())):
-                # print('Find dirty keyword of type \d\d[a-z]\d\d: %s' % trg)
+                
                 continue
 
             trgs_tokens.append(trg_tokens)
 
-        return_pairs.append((src_tokens, trgs_tokens))
+        return_pairs.append((src_tokens, trgs_tokens,query_tokens))
 
-        if idx % 20000 == 0:
+        if idx % 10000 == 0:
             print('-------------------- %s: %d ---------------------------' % (inspect.getframeinfo(inspect.currentframe()).function, idx))
-            # print(src)
-            # print(src_tokens)
-            # print(trgs)
-            # print(trgs_tokens)
-
+            
     return return_pairs
 
 
@@ -358,12 +333,19 @@ def build_dataset(src_trgs_pairs, word2id, id2word, opt, mode='one2one', include
     max_oov_len = 0
     max_oov_sent = ''
 
-    for idx, (source, targets) in enumerate(src_trgs_pairs):
+    for idx, (source, targets,query) in enumerate(src_trgs_pairs):
         # if w is not seen in training data vocab (word2id, size could be larger than opt.vocab_size), replace with <unk>
         src_all = [word2id[w] if w in word2id else word2id[UNK_WORD] for w in source]
         # if w's id is larger than opt.vocab_size, replace with <unk>
         src = [word2id[w] if w in word2id and word2id[w] < opt.vocab_size else word2id[UNK_WORD] for w in source]
-
+        query = [word2id[w] if w in word2id and word2id[w] < opt.vocab_size else word2id[UNK_WORD] for w in query]
+        
+        # if len(query)!=5:
+        #     print(source)
+        #     print(targets)
+        #     print(query)
+        #     # exit(0)
+        #     continue
         # create a local vocab for the current source text. If there're V words in the vocab of this string, len(itos)=V+2 (including <unk> and <pad>), len(stoi)=V+1 (including <pad>)
         src_oov, oov_dict, oov_list = extend_vocab_OOV(source, word2id, opt.vocab_size, opt.max_unk_words)
         examples = []  # for one-to-many
@@ -376,14 +358,10 @@ def build_dataset(src_trgs_pairs, word2id, id2word, opt, mode='one2one', include
                 example['trg_str'] = target
 
             example['src'] = src
-            # example['src_input'] = [word2id[BOS_WORD]] + src + [word2id[EOS_WORD]] # target input, requires BOS at the beginning
-            # example['src_all']   = src_all
+            example['query'] = query
 
             trg = [word2id[w] if w in word2id and word2id[w] < opt.vocab_size else word2id[UNK_WORD] for w in target]
             example['trg'] = trg
-            # example['trg_input']   = [word2id[BOS_WORD]] + trg + [word2id[EOS_WORD]] # target input, requires BOS at the beginning
-            # example['trg_all']   = [word2id[w] if w in word2id else word2id[UNK_WORD] for w in target]
-            # example['trg_loss']  = example['trg'] + [word2id[EOS_WORD]] # target for loss computation, ignore BOS
 
             example['src_oov'] = src_oov
             example['oov_dict'] = oov_dict
@@ -428,7 +406,7 @@ def build_dataset(src_trgs_pairs, word2id, id2word, opt, mode='one2one', include
             o2m_example = {}
             keys = examples[0].keys()
             for key in keys:
-                if key.startswith('src') or key.startswith('oov'):
+                if key.startswith('src') or key.startswith('oov') or key == 'query':
                     o2m_example[key] = examples[0][key]
                 else:
                     o2m_example[key] = [e[key] for e in examples]
@@ -499,7 +477,7 @@ def copy_martix(source, target):
 def build_vocab(tokenized_src_trgs_pairs, opt):
     """Construct a vocabulary from tokenized lines."""
     vocab = {}
-    for src_tokens, trgs_tokens in tokenized_src_trgs_pairs:
+    for src_tokens, trgs_tokens,_ in tokenized_src_trgs_pairs:
         tokens = src_tokens + list(itertools.chain(*trgs_tokens))
         for token in tokens:
             if token not in vocab:
@@ -530,7 +508,8 @@ def build_vocab(tokenized_src_trgs_pairs, opt):
         2: '</s>',
         3: '<unk>',
     }
-
+    opt.vocab_size = min(opt.vocab_size,len(vocab.items()))
+    
     sorted_word2id = sorted(
         vocab.items(),
         key=lambda x: x[1],
@@ -550,82 +529,6 @@ def build_vocab(tokenized_src_trgs_pairs, opt):
     return word2id, id2word, vocab
 
 
-class One2OneKPDatasetOpenNMT(torchtext.data.Dataset):
-    def __init__(self, src_trgs_pairs, fields,
-                 src_seq_length=0, trg_seq_length=0,
-                 src_seq_length_trunc=0, trg_seq_length_trunc=0,
-                 dynamic_dict=True, **kwargs):
-
-        self.src_vocabs = []
-        # examples: one for each src line or (src, trg) line pair.
-        # Each element is a dictionary whose keys represent at minimum
-        # the src tokens and their indices and potentially also the
-        # src and trg features and alignment information.
-        examples = []
-        indices = 0
-
-        for src, trgs in src_trgs_pairs:
-            if src_seq_length_trunc > 0 and len(src) > src_seq_length_trunc:
-                src = src[:src_seq_length_trunc]
-            for trg in trgs:
-                trg = re.sub('\(.*?\)', '', trg).strip()
-                if trg_seq_length_trunc > 0 and len(trg) > trg_seq_length_trunc:
-                    trg = trg[:trg_seq_length_trunc]
-                examples.append({'indices': indices, 'src': src, 'trg': trg})
-                indices += 1
-
-        if dynamic_dict:
-            examples = self.dynamic_dict(examples)
-
-        keys = fields.keys()
-        fields = [(k, fields[k]) for k in keys]
-        example_values = ([ex[k] for k in keys] for ex in examples)
-
-        # internally call the field.preprocess() and process each scr and trg
-        #       including lower(), tokenize() and preprocess()
-        out_examples = (torchtext.data.Example.fromlist(ex_values, fields)
-                        for ex_values in example_values)
-
-        def filter_pred(example):
-            return 0 < len(example.src) <= src_seq_length \
-                and 0 < len(example.trg) <= trg_seq_length
-
-        super(One2OneKPDatasetOpenNMT, self).__init__(
-            out_examples,
-            fields,
-            filter_pred
-        )
-
-    def dynamic_dict(self, examples):
-        for example in examples:
-            src = example["src"]
-            src_vocab = torchtext.vocab.Vocab(Counter(src))
-            self.src_vocabs.append(src_vocab)
-            # mapping source tokens to indices in the dynamic dict
-            src_map = torch.LongTensor([src_vocab.stoi[w] for w in src])
-            example["src_map"] = src_map
-
-            if "trg" in example:
-                trg = example["trg"]
-                mask = torch.LongTensor(
-                    [0] + [src_vocab.stoi[w] for w in trg] + [0])
-                example["alignment"] = mask
-            yield example
-
-    @staticmethod
-    def sort_key(ex):
-        "Sort in reverse size order"
-        return -len(ex.src)
-
-    def __getstate__(self):
-        return self.__dict__
-
-    def __setstate__(self, d):
-        self.__dict__.update(d)
-
-    def __reduce_ex__(self, proto):
-        "This is a hack. Something is broken with torch pickle."
-        return super(One2OneKPDatasetOpenNMT, self).__reduce_ex__()
 
 
 def merge_vocabs(vocabs, vocab_size=None):

@@ -47,7 +47,7 @@ DIGIT = '<digit>'
 def KeyphraseDataset(datapath, word2id, id2word,include_original=False):
     
     def preocess_example(e):
-        keys = ['src', 'trg', 'trg_copy', 'src_oov', 'oov_dict', 'oov_list']
+        keys = ['src', 'trg', 'trg_copy', 'src_oov', 'oov_dict', 'oov_list','query']
         if include_original:
             keys += ['src_str','trg_str']
 
@@ -72,9 +72,9 @@ class BucketIterator(object):
     def __init__(self,datapath,word2id,id2word,
             batch_size=10,sort=False,
             shuffle=None,repeat=False,
-            mode='train',
+            mode=None,
             include_original=False,
-            length=None):
+            length=None,Data_type=None):
 
         super(BucketIterator, self).__init__()#dataset=dataset,sort=False,shuffle=False,
                                             #batch_size=batch_size,repeat=repeat)
@@ -84,9 +84,6 @@ class BucketIterator(object):
         self.id2word = id2word
         self.batch_size = batch_size
 
-        # self._iterations_this_epoch = 0
-        # self._random_state_this_epoch = None
-        # self._restored_from_state = False
         self.include_original = include_original        
         self.pad_id = word2id[PAD_WORD]
         
@@ -94,17 +91,20 @@ class BucketIterator(object):
         self.sort = sort
         self.length=length
         self.mode = mode
-    
+        self.Data_Set=Data_type
     def __len__(self):
         return self.length
 
     def init_batches(self):
-        self.dataset = KeyphraseDataset(self.datapath,self.word2id,self.id2word,self.include_original)
+        # self.dataset = KeyphraseDataset(self.datapath,self.word2id,self.id2word,self.include_original)
+        self.dataset = self.Data_Set(self.datapath,self.word2id,self.id2word,self.include_original)
         
         if self.mode == 'keyword':
             self.batches = self.pool(self.dataset, self.batch_size,self.collate_fn_one2one) 
         elif self.mode =='keyphrase':
-            self.batches = self.pool(self.dataset, self.batch_size,self.collate_fn_one2many) 
+            self.batches = self.pool(self.dataset, self.batch_size,self.collate_fn_one2many)
+        else:
+            self.batches = self.pool(self.dataset,self.batch_size,self.process_batch)
     
     def batch(self,data, batch_size):
     
@@ -142,7 +142,7 @@ class BucketIterator(object):
         src_oov = [[self.word2id[BOS_WORD]] + b['src_oov'] + [self.word2id[EOS_WORD]] for b in batches]
         
         oov_lists = [b['oov_list'] for b in batches]
-
+        query_lists = [b['query'] for b in batches]
 
         if self.include_original:
             src_str = [b['src_str'] for b in batches]
@@ -156,6 +156,7 @@ class BucketIterator(object):
             trg_target = [trg_target[i] for i in src_len_order]
             trg_copy_target = [trg_copy_target[i] for i in src_len_order]
             oov_lists = [oov_lists[i] for i in src_len_order]
+            query_lists = [query_lists[i] for i in src_len_order]
 
             if self.include_original:
                 src_str = [src_str[i] for i in src_len_order]
@@ -166,11 +167,12 @@ class BucketIterator(object):
         trg_target, _, _ = self._pad(trg_target)
         trg_copy_target, _, _ = self._pad(trg_copy_target)
         src_oov, _, _ = self._pad(src_oov)
-        
-        if self.include_original:
-            return src, src_len, trg, trg_target, trg_copy_target, src_oov, oov_lists,src_str,trg_str
+        query_lists,query_len,_ = self._pad(query_lists)       
+             
+        # if self.include_original:
+        #     return src, src_len, trg, trg_target, trg_copy_target, src_oov, oov_lists,query_lists,src_str,trg_str
 
-        return src, src_len, trg, trg_target, trg_copy_target, src_oov, oov_lists
+        return src, src_len, trg, trg_target, trg_copy_target, src_oov, oov_lists,query_lists,query_len
 
     def collate_fn_one2many(self, batches):
         # source with oov words replaced by <unk>
@@ -187,23 +189,26 @@ class BucketIterator(object):
         # target for copy model, oovs are replaced with temporary idx, e.g. 50000, 50001 etc.)
         trg_copy_target = [[t + [self.word2id[EOS_WORD]] for t in b['trg_copy']] for b in batches]
         oov_lists = [b['oov_list'] for b in batches]
+        query_lists = [b['query'] for b in batches]
 
         # for training, the trg_copy_target_o2o and trg_copy_target_o2m is the final target (no way to uncover really unseen words). for evaluation, the trg_str is the final target.
         if self.include_original:
             src_str = [b['src_str'] for b in batches]
             trg_str = [b['trg_str'] for b in batches]
+        if self.sort:
+            # sort all the sequences in the order of source lengths, to meet the requirement of pack_padded_sequence
+            src_len_order = np.argsort([len(s) for s in src])[::-1]
+            src = [src[i] for i in src_len_order]
+            src_oov = [src_oov[i] for i in src_len_order]
+            trg = [trg[i] for i in src_len_order]
+            trg_target = [trg_target[i] for i in src_len_order]
+            trg_copy_target = [trg_copy_target[i] for i in src_len_order]
+            oov_lists = [oov_lists[i] for i in src_len_order]
+            query_lists = [query_lists[i] for i in src_len_order]
 
-        # sort all the sequences in the order of source lengths, to meet the requirement of pack_padded_sequence
-        src_len_order = np.argsort([len(s) for s in src])[::-1]
-        src = [src[i] for i in src_len_order]
-        src_oov = [src_oov[i] for i in src_len_order]
-        trg = [trg[i] for i in src_len_order]
-        trg_target = [trg_target[i] for i in src_len_order]
-        trg_copy_target = [trg_copy_target[i] for i in src_len_order]
-        oov_lists = [oov_lists[i] for i in src_len_order]
-        if self.include_original:
-            src_str = [src_str[i] for i in src_len_order]
-            trg_str = [trg_str[i] for i in src_len_order]
+            if self.include_original:
+                src_str = [src_str[i] for i in src_len_order]
+                trg_str = [trg_str[i] for i in src_len_order]
 
         # pad the one2many variables
         src_o2m, src_o2m_len, _ = self._pad(src)
@@ -212,7 +217,9 @@ class BucketIterator(object):
         # trg_target_o2m, _, _      = self._pad(trg_target)
         trg_copy_target_o2m = trg_copy_target
         oov_lists_o2m = oov_lists
-
+        query_lists,query_len,_ = self._pad(query_lists)
+        
+        # query_lists = torch.LongTensor(query_lists)        
         # unfold the one2many pairs and pad the one2one variables
         src_o2o, src_o2o_len, _ = self._pad(list(itertools.chain(*[[src[idx]] * len(t) for idx, t in enumerate(trg)])))
         src_oov_o2o, _, _ = self._pad(list(itertools.chain(*[[src_oov[idx]] * len(t) for idx, t in enumerate(trg)])))
@@ -229,16 +236,16 @@ class BucketIterator(object):
 
         # return two tuples, 1st for one2many and 2nd for one2one (src, src_oov, trg, trg_target, trg_copy_target, oov_lists)
         if self.include_original:
-            return src_o2m, src_o2m_len, trg_o2m, None, trg_copy_target_o2m, src_oov_o2m, oov_lists_o2m, src_str, trg_str
+            return src_o2m, src_o2m_len, trg_o2m, None, trg_copy_target_o2m, src_oov_o2m, oov_lists_o2m, query_lists,query_len,src_str, trg_str
         else:
-            return src_o2m, src_o2m_len, trg_o2m, None, trg_copy_target_o2m, src_oov_o2m, oov_lists_o2m
+            return src_o2m, src_o2m_len, trg_o2m, None, trg_copy_target_o2m, src_oov_o2m, oov_lists_o2m,query_lists,query_len
 
-    def _pad(self,x_raw,):
+    def _pad(self,x_raw,pad_id=0):
         x_raw = np.asarray(x_raw)
-        x_lens = [len(x_) for x_ in x_raw]
+        x_lens = np.asarray([len(x_) for x_ in x_raw])
         max_length = max(x_lens)  # (deprecated) + 1 to ensure at least one padding appears in the end
         # x_lens = [x_len + 1 for x_len in x_lens]
-        x = np.array([np.concatenate((x_, [self.pad_id] * (max_length - len(x_)))) for x_ in x_raw])
+        x = np.array([np.concatenate((x_, [pad_id] * (max_length - len(x_)))) for x_ in x_raw])
         x = Variable(torch.stack([torch.from_numpy(x_) for x_ in x], 0)).type('torch.LongTensor')
         x_mask = np.array([[1] * x_len + [0] * (max_length - x_len) for x_len in x_lens])
         x_mask = Variable(torch.stack([torch.from_numpy(m_) for m_ in x_mask], 0))
@@ -247,7 +254,9 @@ class BucketIterator(object):
 
         return x, x_lens, x_mask
     
-        
+    # def process_batch(self,batch):
+    #     print('fuck')
+    #     pass 
 
     def __iter__(self):
         while True:

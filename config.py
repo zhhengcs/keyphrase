@@ -39,7 +39,7 @@ def model_opts(parser):
     # Device options
     parser.add_argument('-use_gpu',default=True,help='Use GPU or not.')
     # Embedding Options
-    parser.add_argument('-word_vec_size', type=int, default=150,
+    parser.add_argument('-word_vec_size', type=int, default=100,
                         help='Word embedding for both.')
 
     parser.add_argument('-position_encoding', action='store_true',
@@ -63,7 +63,7 @@ def model_opts(parser):
     parser.add_argument('-dec_layers', type=int, default=1,
                         help='Number of layers in the decoder')
 
-    parser.add_argument('-rnn_size', type=int, default=150,
+    parser.add_argument('-rnn_size', type=int, default=200,
                         help='Size of LSTM hidden states')
     # parser.add_argument('-input_feed', type=int, default=1,
     #                     help="""Feed the context vector at each time step as
@@ -167,13 +167,13 @@ def preprocess_opts(parser):
 
 def train_opts(parser):
     # Model loading/saving options
-    parser.add_argument('-data', default='data/AAAI/kp20k',
+    parser.add_argument('-data', default='data/AAAI/',
                         help="""Path prefix to the ".train.pt" and
                         ".valid.pt" file path from preprocess.py""")
     parser.add_argument('-word_or_phrase', default='phrase', type=str,
                         help="""generate keyword or keyphrase""")
 
-    parser.add_argument('-vocab', default='data/AAAI/kp20k',
+    parser.add_argument('-vocab', default='data/AAAI/',
                         help="""Path prefix to the ".vocab.pt"
                         file path from preprocess.py""")
 
@@ -219,14 +219,14 @@ def train_opts(parser):
                         help="Fix word embeddings on the encoder side.")
 
     # Optimization options
-    parser.add_argument('-batch_size', type=int, default=100,
+    parser.add_argument('-batch_size', type=int, default=64,
                         help='Maximum batch size')
     parser.add_argument('-batch_workers', type=int, default=4,
                         help='Number of workers for generating batches')
     parser.add_argument('-optim', default='adam',
                         choices=['sgd', 'adagrad', 'adadelta', 'adam'],
                         help="""Optimization method.""")
-    parser.add_argument('-max_grad_norm', type=float, default=5,
+    parser.add_argument('-max_grad_norm', type=float, default=1,
                         help="""If the norm of the gradient vector exceeds this,
                         renormalize it to have the norm equal to
                         max_grad_norm""")
@@ -258,27 +258,27 @@ def train_opts(parser):
                         help="The maximum number of batches to apply scheduled sampling")
 
     # learning rate
-    parser.add_argument('-learning_rate', type=float, default=0.0005,
+    parser.add_argument('-learning_rate', type=float, default=0.001,
                         help="""Starting learning rate.
                         Recommended settings: sgd = 1, adagrad = 0.1,
                         adadelta = 1, adam = 0.001""")
-    parser.add_argument('-learning_rate_rl', type=float, default=0.0001,
-                        help="""Starting learning rate for Reinforcement Learning.
-                        Recommended settings: sgd = 1, adagrad = 0.1,
-                        adadelta = 1, adam = 0.001""")
+
     parser.add_argument('-learning_rate_decay', type=float, default=0.5,
                         help="""If update_learning_rate, decay learning rate by
                         this much if (i) perplexity does not decrease on the
                         validation set or (ii) epoch has gone past
                         start_decay_at""")
+
     parser.add_argument('-start_decay_at', type=int, default=8,
                         help="""Start decaying every epoch after and including this
                         epoch""")
+
     parser.add_argument('-start_checkpoint_at', type=int, default=2,
                         help="""Start checkpointing every epoch after and including
                         this epoch""")
     parser.add_argument('-decay_method', type=str, default="",
                         choices=['noam'], help="Use a custom decay rate.")
+    
     parser.add_argument('-warmup_steps', type=int, default=4000,
                         help="""Number of warmup steps for custom decay.""")
 
@@ -307,15 +307,8 @@ def train_opts(parser):
                         help="Path of checkpoints.")
 
     # beam search setting
-    parser.add_argument('-beam_batch', type=int, default=5,
+    parser.add_argument('-beam_batch', type=int, default=1,
                         help='beam_batch')
-
-    parser.add_argument('-beam_search_batch_example', type=int, default=100,
-                        help='Maximum of examples for one batch, should be disabled for training')
-    parser.add_argument('-beam_search_batch_size', type=int, default=100,
-                        help='Maximum batch size')
-    parser.add_argument('-beam_search_batch_workers', type=int, default=6,
-                        help='Number of workers for generating batches')
 
     parser.add_argument('-beam_size',  type=int, default=30,
                         help='Beam size')

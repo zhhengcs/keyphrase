@@ -25,7 +25,7 @@ import torch.nn as nn
 from torch import cuda
 
 from beam_search import SequenceGenerator
-from evaluate import evaluate_beam_search, get_match_result, self_redundancy
+from evaluate import evaluate_beam_search, get_match_result
 
 from utils import Progbar, plot_learning_curve
 
@@ -42,9 +42,9 @@ __email__ = "rui.meng@pitt.edu"
 
 
 def train_ml(one2one_batch, model, optimizer, criterion, opt):
-    src, src_len, trg, trg_target, trg_copy_target, src_oov, oov_lists = one2one_batch
-
-    query_src = src[:,:5]
+    src, src_len, trg, trg_target, trg_copy_target, src_oov, oov_lists,query,query_len = one2one_batch
+    
+    # query_src = src[:,:5]
 
     #
     max_oov_number = max([len(oov) for oov in oov_lists])
@@ -55,10 +55,11 @@ def train_ml(one2one_batch, model, optimizer, criterion, opt):
         trg_target = trg_target.cuda()
         trg_copy_target = trg_copy_target.cuda()
         src_oov = src_oov.cuda()
+        query = query.cuda()
 
     optimizer.zero_grad()
-    
-    decoder_log_probs, _, _ = model.forward(src, src_len, trg, src_oov, oov_lists,query_src=query_src)
+  
+    decoder_log_probs, _, _ = model.forward(src, src_len, trg, src_oov, oov_lists,query=query,query_len=query_len)
     # print(decoder_log_probs.size(),'decoder_log_probs')
     # exit(0)
     # print('*'*50)
@@ -80,9 +81,6 @@ def train_ml(one2one_batch, model, optimizer, criterion, opt):
     # loss = loss * (1 - opt.loss_scale)
     # print("--loss calculation- %s seconds ---" % (time.time() - start_time))
 
-    # start_time = time.time()
-    # print(loss.data,'loss')
-    # exit(0)
     loss.backward()
     # print("--backward- %s seconds ---" % (time.time() - start_time))
 
@@ -94,12 +92,7 @@ def train_ml(one2one_batch, model, optimizer, criterion, opt):
 
     return loss.data.item(), decoder_log_probs
 
-def train_model(model, optimizer_ml, optimizer_rl, criterion, train_data_loader,  opt,eval_dataloader):
-    # generator = SequenceGenerator(model,opt
-    #                               eos_id=opt.word2id[pykp.io.EOS_WORD],
-    #                               beam_size=opt.beam_size,
-    #                               max_sequence_length=opt.max_sent_length
-    #                               )
+def train_model(model, optimizer_ml, criterion, train_data_loader,  opt,eval_dataloader):
 
     logging.info('======================  Start Training  =========================')
 
@@ -139,20 +132,20 @@ def train_model(model, optimizer_ml, optimizer_rl, criterion, train_data_loader,
             # if total_batch > 1 and total_batch % opt.save_model_every  == 0:  # epoch >= opt.start_checkpoint_at and
             # Save the checkpoint
                 
-        save_dir = os.path.join(opt.model_path, '%s.epoch=%d.batch=%d.total_batch=%d' % (opt.exp, epoch, batch_i, total_batch) + '.model')
+        save_dir = os.path.join(opt.model_path, '%s.epoch=%d.batch=%d' % (opt.exp, epoch, batch_i) + '.model')
         try:
             torch.save(model.state_dict(),open(save_dir, 'wb'))
         except:
             pass
 
-
-        # evaluate_per_epoch(model,eval_dataloader,opt)
+        # evaluate_per_epoch(model,eval_dataloader,opt,epoch)
               
 def load_data_vocab(opt, load_train=True):
 
     logging.info("Loading vocab from disk: %s" % (opt.vocab))
-    word2id, id2word, vocab = torch.load(opt.vocab + '.vocab.pt', 'wb')
-
+    word2id, id2word, vocab = torch.load(opt.vocab + 'vocab.pt', 'wb')
+    
+    
     # one2one data loader
     logging.info("Loading train and validate data from '%s'" % opt.data)
 
@@ -160,18 +153,21 @@ def load_data_vocab(opt, load_train=True):
     logging.info('======================  Dataset  =========================')
     # one2many data loader
     if load_train:
-        train_one2one_loader = BucketIterator('./data/AAAI/kp20k.test.one2one.json',word2id,id2word,
+        train_one2one_loader = BucketIterator('./data/AAAI/train.one2one.json',word2id,id2word,
                                             batch_size=opt.batch_size,mode='keyword',
-                                            repeat=False,sort=True,shuffle=False,length=20000)
+                                            repeat=False,sort=False,
+                                            shuffle=False,length=87338,
+                                            Data_type=KeyphraseDataset)
         
-        test_one2many_loader = BucketIterator('./data/AAAI/small_test.json',word2id,id2word,
+        test_one2many_loader = BucketIterator('./data/AAAI/test.one2many.json',word2id,id2word,
                                             batch_size=opt.beam_batch,
                                             include_original=True,
-                                            mode='keyword',
+                                            mode='keyphrase',
                                             repeat=False,
                                             sort=False,
                                             shuffle=False,
-                                            length=2000)
+                                            length=1866,
+                                            Data_type=KeyphraseDataset)
 
         logging.info('#(train data size:  #(one2one pair)=%d, #(batch)=%d' % (len(train_one2one_loader), len(train_one2one_loader) / train_one2one_loader.batch_size))
     else:	
@@ -179,7 +175,7 @@ def load_data_vocab(opt, load_train=True):
     opt.word2id = word2id
     opt.id2word = id2word
     opt.vocab = vocab
-
+    opt.vocab_size = len(id2word)
     
     logging.info('#(vocab)=%d' % len(vocab))
     logging.info('#(vocab used)=%d' % opt.vocab_size)
@@ -194,18 +190,7 @@ def init_optimizer_criterion(model, opt):
     :param opt:
     :return:
     """
-    '''
-    if not opt.copy_attention:
-        weight_mask = torch.ones(opt.vocab_size).cuda() if torch.cuda.is_available() else torch.ones(opt.vocab_size)
-    else:
-        weight_mask = torch.ones(opt.vocab_size + opt.max_unk_words).cuda() if torch.cuda.is_available() else torch.ones(opt.vocab_size + opt.max_unk_words)
-    weight_mask[opt.word2id[pykp.IO.PAD_WORD]] = 0
-    criterion = torch.nn.NLLLoss(weight=weight_mask)
-
-    optimizer = Adam(params=filter(lambda p: p.requires_grad, model.parameters()), lr=opt.learning_rate)
-    # optimizer = torch.optim.Adadelta(model.parameters(), lr=0.1)
-    # optimizer = torch.optim.RMSprop(model.parameters(), lr=0.1)
-    '''
+   
     criterion = torch.nn.NLLLoss(ignore_index=opt.word2id[pykp.io.PAD_WORD])
 
     if opt.train_ml:
@@ -213,15 +198,11 @@ def init_optimizer_criterion(model, opt):
     else:
         optimizer_ml = None
 
-    if opt.train_rl:
-        optimizer_rl = Adam(params=filter(lambda p: p.requires_grad, model.parameters()), lr=opt.learning_rate_rl)
-    else:
-        optimizer_rl = None
 
     if torch.cuda.is_available() and opt.use_gpu:
         criterion = criterion.cuda()
 
-    return optimizer_ml, optimizer_rl, criterion
+    return optimizer_ml, criterion
 
 
 def init_model(opt):
@@ -231,6 +212,7 @@ def init_model(opt):
         model = Seq2SeqLSTMAttentionCascading(opt)
     else:
         model = Seq2SeqLSTMAttention(opt)
+
 
     if opt.train_from:
         logging.info("loading previous checkpoint from %s" % opt.train_from)
@@ -259,10 +241,13 @@ def init_model(opt):
         )
 
     if torch.cuda.is_available() and opt.use_gpu:
+
         model = model.cuda()
 
     utils.tally_parameters(model)
-
+    # embedding = torch.load('embedding40004.pt')
+    # model.init_embedding(embedding,requires_grad=False)
+    
     return model
 
 
@@ -276,8 +261,6 @@ def process_opt(opt):
     if hasattr(opt, 'train_ml') and opt.train_ml:
         opt.exp += '.ml'
 
-    if hasattr(opt, 'train_rl') and opt.train_rl:
-        opt.exp += '.rl'
 
     if hasattr(opt, 'copy_attention') and opt.copy_attention:
         opt.exp += '.copy'
@@ -317,18 +300,34 @@ def process_opt(opt):
 
     return opt
 
-def evaluate_per_epoch(model,eval_dataloader,opt):
+def evaluate_per_epoch(model,eval_dataloader,opt,epoch):
     generator = SequenceGenerator(model,opt,eos_id=opt.word2id[pykp.io.EOS_WORD],
                                       beam_size=opt.beam_size,
                                       max_sequence_length=opt.max_sent_length,
                                       )
 
-    model_path = opt.train_from.split('/')[-1]
-    _, epoch, batch, total_batch = re.findall('\d+', model_path)
 
-    evaluate_beam_search(generator, test_data_loader, opt, title='predict',
-                     save_path=opt.pred_path + '/epoch=%s,batch=%s,total_batch=%s' % (epoch, batch, total_batch))
+    evaluate_beam_search(generator, eval_dataloader, opt, title='predict',
+                     save_path=opt.pred_path + '/epoch=%s' % (epoch))
     
+def make_embedding(word2id,id2word):
+    f = open('seq_labeling/wordvec/glove.6B.100d.txt')
+    word2vec = dict()
+    for line in f:
+        L = line.split()
+        w = L[0]
+        vec = [float(x) for x in L[1:]]
+        word2vec[w] = np.array(vec)
+    embedding = torch.zeros((len(word2id),100))
+    for i in range(len(word2id)):
+        w = id2word[i]
+        if w in word2vec:
+            
+            embedding[i] = torch.from_numpy(word2vec[w])
+        else:
+            embedding[i].uniform_(-0.1, 0.1)
+    torch.save(embedding,'embedding'+str(len(word2id))+'.pt') 
+    return embedding
 
 def main():
     # load settings for training
@@ -350,12 +349,17 @@ def main():
     logging = config.init_logging(logger_name=None, log_file=opt.exp_path + '/output.log', stdout=True)
     try:
        
-        # opt.train_from = 'model/kp20k.ml.copy.bi-directional.20180823-220909/kp20k.ml.copy.bi-directional.epoch=1.batch=9900.total_batch=9900.model'
+        # opt.train_from = 'model/kp20k.ml.copy.bi-directional.20180901-025437/kp20k.ml.copy.bi-directional.epoch=9.batch=938.model'
         train_data_loader,word2id, id2word, vocab,eval_dataloader = load_data_vocab(opt)
         model = init_model(opt)
-                
-        optimizer_ml, _, criterion = init_optimizer_criterion(model, opt)
-        train_model(model, optimizer_ml, _, criterion, train_data_loader,  opt,eval_dataloader)
+        # embedding=make_embedding(word2id,id2word)
+        embedding = torch.load('embedding50004.pt')
+        model.init_embedding(embedding)
+
+        opt.learning_rate = 0.0001
+        optimizer_ml,criterion = init_optimizer_criterion(model, opt)
+        train_model(model, optimizer_ml, criterion, train_data_loader,  opt,eval_dataloader)
+
     except Exception as e:
         logging.exception("message")
 

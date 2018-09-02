@@ -14,6 +14,7 @@ class GetMask(torch.nn.Module):
 
     def forward(self, x):
         mask = torch.ne(x, self.pad_idx).float()
+        
         return mask
 
 

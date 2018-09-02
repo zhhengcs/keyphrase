@@ -27,7 +27,7 @@ __email__ = "rui.meng@pitt.edu"
 def load_data_vocab(opt, load_train=False):
 
     logging.info("Loading vocab from disk: %s" % (opt.vocab))
-    word2id, id2word, vocab = torch.load(opt.vocab + '.vocab.pt', 'wb')
+    word2id, id2word, vocab = torch.load(opt.vocab + 'vocab.pt', 'wb')
 
     # one2one data loader
     logging.info("Loading train and validate data from '%s'" % opt.data)
@@ -39,15 +39,17 @@ def load_data_vocab(opt, load_train=False):
     opt.word2id = word2id
     opt.id2word = id2word
     opt.vocab = vocab
-    
-    test_one2many_loader = BucketIterator('./data/AAAI/small_test.json',word2id,id2word,
+    opt.vocab_size = len(id2word)
+
+    test_one2many_loader = BucketIterator('./data/AAAI/test.one2many.json',word2id,id2word,
                                             batch_size=opt.beam_batch,
                                             include_original=True,
-                                            mode='keyword',
+                                            mode='keyphrase',
                                             repeat=False,
                                             sort=True,
                                             shuffle=False,
-                                            length=2000)
+                                            length=1866,
+                                            Data_type=KeyphraseDataset)
     
 
 
@@ -95,7 +97,10 @@ def init_model(opt):
         model = model.cuda()
 
     utils.tally_parameters(model)
-
+    
+    # embedding = torch.load('embedding40004.pt')
+    # model.init_embedding(embedding,requires_grad=False)
+        
     return model
 
 def main():
@@ -138,10 +143,10 @@ def main():
         os.makedirs(opt.pred_path)
 
     logging = config.init_logging(logger_name=None, log_file=opt.exp_path + '/output.log', stdout=True)
-
-    opt.use_gpu = True
+    
+    
     try:
-        # opt.train_from = 'model/kp20k.ml.copy.bi-directional.20180824-222135/kp20k.ml.copy.bi-directional.epoch=9.batch=159.total_batch=1439.model'
+        # opt.train_from = 'model/kp20k.ml.copy.bi-directional.20180901-221612/kp20k.ml.copy.bi-directional.epoch=5.batch=938.model'
         test_data_loader, word2id, id2word, vocab = load_data_vocab(opt, load_train=False)
         model = init_model(opt)
 
@@ -150,7 +155,7 @@ def main():
                                       beam_size=opt.beam_size,
                                       max_sequence_length=opt.max_sent_length,
                                       )
-
+        
         evaluate_beam_search(generator, test_data_loader, opt, title='predict', save_path=opt.pred_path + '/[epoch=%d,batch=%d,total_batch=%d]test_result.csv' % (0, 0, 0))
 
     except Exception as e:
