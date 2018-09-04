@@ -238,13 +238,14 @@ class SequenceGenerator(object):
         if self.model.encoder_name == 'BiGRU':
             src_context, src_h = self.model.encode(src_input, src_len)
         else:
-            
             src_context,src_h,query_outputs = self.model.attention_encode(src_input,src_len,src_mask,query,query_len,query_mask)
 
         if self.model.decoder_name == 'Memory Network':
             # self.model.Memory_Decoder.ntm.set_memory(query_outputs,ctx_mask,encoder_outputs)
             self.model.Memory_Decoder.ntm.set_memory(query_outputs,src_mask,src_context)
-        
+        else:
+            query_outputs = torch.zeros(src_context.size())
+
         dec_hiddens = src_h
         
         initial_input = [word2id[pykp.io.BOS_WORD]] * batch_size #[BOS_WORD] 
@@ -378,7 +379,7 @@ class SequenceGenerator(object):
                             score=copy.copy(partial_seq.score),
                             attention=copy.copy(partial_seq.attention),
                             query_context = partial_seq.query_context,
-                            # query_mask = partial_seq.query_mask
+                            
                         )
 
                         # we have generated self.beam_size new hypotheses for current hyp, stop generating

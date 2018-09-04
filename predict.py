@@ -48,7 +48,7 @@ def load_data_vocab(opt, load_train=False):
                                             repeat=False,
                                             sort=True,
                                             shuffle=False,
-                                            length=1866,
+                                            length=1988,
                                             Data_type=KeyphraseDataset)
     
 
@@ -146,7 +146,7 @@ def main():
     
     
     try:
-        # opt.train_from = 'model/kp20k.ml.copy.bi-directional.20180901-221612/kp20k.ml.copy.bi-directional.epoch=5.batch=938.model'
+        # opt.train_from = 'model/kp20k.ml.copy.bi-directional.20180904-103517/kp20k.ml.copy.bi-directional.epoch=9.batch=1466.model'
         test_data_loader, word2id, id2word, vocab = load_data_vocab(opt, load_train=False)
         model = init_model(opt)
 

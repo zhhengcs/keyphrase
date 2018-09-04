@@ -339,13 +339,7 @@ def build_dataset(src_trgs_pairs, word2id, id2word, opt, mode='one2one', include
         # if w's id is larger than opt.vocab_size, replace with <unk>
         src = [word2id[w] if w in word2id and word2id[w] < opt.vocab_size else word2id[UNK_WORD] for w in source]
         query = [word2id[w] if w in word2id and word2id[w] < opt.vocab_size else word2id[UNK_WORD] for w in query]
-        
-        # if len(query)!=5:
-        #     print(source)
-        #     print(targets)
-        #     print(query)
-        #     # exit(0)
-        #     continue
+
         # create a local vocab for the current source text. If there're V words in the vocab of this string, len(itos)=V+2 (including <unk> and <pad>), len(stoi)=V+1 (including <pad>)
         src_oov, oov_dict, oov_list = extend_vocab_OOV(source, word2id, opt.vocab_size, opt.max_unk_words)
         examples = []  # for one-to-many
@@ -381,15 +375,6 @@ def build_dataset(src_trgs_pairs, word2id, id2word, opt, mode='one2one', include
                     trg_copy.append(word2id[UNK_WORD])
 
             example['trg_copy'] = trg_copy
-            # example['trg_copy_input'] = [word2id[BOS_WORD]] + trg_copy + [word2id[EOS_WORD]] # target input, requires BOS at the beginning
-            # example['trg_copy_loss']  = example['trg_copy'] + [word2id[EOS_WORD]] # target for loss computation, ignore BOS
-
-            # example['copy_martix'] = copy_martix(source, target)
-            # C = [0 if w not in source else source.index(w) + opt.vocab_size for w in target]
-            # example["copy_index"] = C
-            # A = [word2idx[w] if w in word2idx else word2idx['<unk>'] for w in source]
-            # B = [[word2idx[w] if w in word2idx else word2idx['<unk>'] for w in p] for p in target]
-            # C = [[0 if w not in source else source.index(w) + Lmax for w in p] for p in target]
 
             if any([w >= opt.vocab_size for w in trg_copy]):
                 oov_target += 1

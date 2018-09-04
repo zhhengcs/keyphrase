@@ -63,7 +63,7 @@ def model_opts(parser):
     parser.add_argument('-dec_layers', type=int, default=1,
                         help='Number of layers in the decoder')
 
-    parser.add_argument('-rnn_size', type=int, default=200,
+    parser.add_argument('-rnn_size', type=int, default=300,
                         help='Size of LSTM hidden states')
     # parser.add_argument('-input_feed', type=int, default=1,
     #                     help="""Feed the context vector at each time step as
@@ -88,7 +88,7 @@ def model_opts(parser):
                         help="whether the encoder is bidirectional")
 
     # Attention options
-    parser.add_argument('-attention_mode', type=str, default='general',
+    parser.add_argument('-attention_mode', type=str, default='dot',
                         choices=['dot', 'general', 'concat'],
                         help="""The attention type to use:
                         dot or general (Luong) or concat (Bahdanau)""")
@@ -219,7 +219,7 @@ def train_opts(parser):
                         help="Fix word embeddings on the encoder side.")
 
     # Optimization options
-    parser.add_argument('-batch_size', type=int, default=64,
+    parser.add_argument('-batch_size', type=int, default=32,
                         help='Maximum batch size')
     parser.add_argument('-batch_workers', type=int, default=4,
                         help='Number of workers for generating batches')
@@ -310,7 +310,7 @@ def train_opts(parser):
     parser.add_argument('-beam_batch', type=int, default=1,
                         help='beam_batch')
 
-    parser.add_argument('-beam_size',  type=int, default=30,
+    parser.add_argument('-beam_size',  type=int, default=50,
                         help='Beam size')
     parser.add_argument('-max_sent_length', type=int, default=10,
                         help='Maximum sentence length.')

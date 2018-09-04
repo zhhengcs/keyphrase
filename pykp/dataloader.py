@@ -195,6 +195,7 @@ class BucketIterator(object):
         if self.include_original:
             src_str = [b['src_str'] for b in batches]
             trg_str = [b['trg_str'] for b in batches]
+        
         if self.sort:
             # sort all the sequences in the order of source lengths, to meet the requirement of pack_padded_sequence
             src_len_order = np.argsort([len(s) for s in src])[::-1]

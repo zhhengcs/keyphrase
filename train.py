@@ -60,9 +60,7 @@ def train_ml(one2one_batch, model, optimizer, criterion, opt):
     optimizer.zero_grad()
   
     decoder_log_probs, _, _ = model.forward(src, src_len, trg, src_oov, oov_lists,query=query,query_len=query_len)
-    # print(decoder_log_probs.size(),'decoder_log_probs')
-    # exit(0)
-    # print('*'*50)
+    
     # simply average losses of all the predicitons
     # IMPORTANT, must use logits instead of probs to compute the loss, otherwise it's super super slow at the beginning (grads of probs are small)!
     start_time = time.time()
@@ -156,7 +154,7 @@ def load_data_vocab(opt, load_train=True):
         train_one2one_loader = BucketIterator('./data/AAAI/train.one2one.json',word2id,id2word,
                                             batch_size=opt.batch_size,mode='keyword',
                                             repeat=False,sort=False,
-                                            shuffle=False,length=87338,
+                                            shuffle=False,length=93849,
                                             Data_type=KeyphraseDataset)
         
         test_one2many_loader = BucketIterator('./data/AAAI/test.one2many.json',word2id,id2word,
@@ -166,7 +164,7 @@ def load_data_vocab(opt, load_train=True):
                                             repeat=False,
                                             sort=False,
                                             shuffle=False,
-                                            length=1866,
+                                            length=1988,
                                             Data_type=KeyphraseDataset)
 
         logging.info('#(train data size:  #(one2one pair)=%d, #(batch)=%d' % (len(train_one2one_loader), len(train_one2one_loader) / train_one2one_loader.batch_size))
@@ -311,7 +309,7 @@ def evaluate_per_epoch(model,eval_dataloader,opt,epoch):
                      save_path=opt.pred_path + '/epoch=%s' % (epoch))
     
 def make_embedding(word2id,id2word):
-    f = open('seq_labeling/wordvec/glove.6B.100d.txt')
+    f = open('wordvec/glove.6B.100d.txt')
     word2vec = dict()
     for line in f:
         L = line.split()
@@ -356,7 +354,7 @@ def main():
         embedding = torch.load('embedding50004.pt')
         model.init_embedding(embedding)
 
-        opt.learning_rate = 0.0001
+        opt.learning_rate = 0.001
         optimizer_ml,criterion = init_optimizer_criterion(model, opt)
         train_model(model, optimizer_ml, criterion, train_data_loader,  opt,eval_dataloader)
 

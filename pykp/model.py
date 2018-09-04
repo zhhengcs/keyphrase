@@ -85,6 +85,7 @@ class Attention(nn.Module):
             energies = []
             batch_size = encoder_outputs.size(0)
             src_len = encoder_outputs.size(1)
+            
             for i in range(hiddens.size(1)):
                 hidden_i = hiddens[:, i: i + 1, :].expand(-1, src_len, -1)  # (batch, src_len, trg_hidden_dim)
                 concated = torch.cat((hidden_i, encoder_outputs), 2)  # (batch_size, src_len, dec_hidden_dim + enc_hidden_dim)
@@ -205,7 +206,7 @@ class Seq2SeqLSTMAttention(nn.Module):
 
         self.use_gpu = opt.use_gpu
         self.encoder_name = 'Attention' # BiGRU or Attention
-        self.decoder_name='CopyRNN' #CopyRNN or Memory Network
+        self.decoder_name='Memory Network' #CopyRNN or Memory Network
 
         self.get_mask = GetMask(self.pad_token_src)
         # self.x_context = nn.Linear(self.src_hidden_dim*2 , self.src_hidden_dim)
@@ -327,8 +328,9 @@ class Seq2SeqLSTMAttention(nn.Module):
          3. Very important: as we need to merge probs of copying and generative part, thus we have to operate with probs instead of logits. Thus here we return the probs not logits. Respectively, the loss criterion outside is NLLLoss but not CrossEntropyLoss any more.
         :param
             input_src : numericalized source text, oov words have been replaced with <unk>
-            input_trg : numericalized target text, oov words have been replaced with temporary oov index
-            input_src_ext : numericalized source text in extended vocab, oov words have been replaced with temporary oov index, for copy mechanism to map the probs of pointed words to vocab words
+            input_trg : numericalized target text, oov words have been replaced with <unk>
+            input_src_ext : numericalized source text in extended vocab, oov words have been replaced with temporary oov index,
+                            for copy mechanism to map the probs of pointed words to vocab words
         :returns
             decoder_logits      : (batch_size, trg_seq_len, vocab_size)
             decoder_outputs     : (batch_size, trg_seq_len, hidden_size)
@@ -468,18 +470,13 @@ class Seq2SeqLSTMAttention(nn.Module):
         """
         Propogate input through the network.
         """
-        # initial encoder state
-        self.h_encoder = self.init_encoder_state(input_src)  # (self.encoder.num_layers * self.num_directions, batch_size, self.src_hidden_dim)
-        
-        src_emb = self.embedding(input_src)
-        src_emb = nn.utils.rnn.pack_padded_sequence(src_emb, input_src_len, batch_first=True)
 
+        src_emb = self.embedding(input_src)
         
-        
-        src_h, src_state = self.encoder(src_emb, self.h_encoder)
-        src_h, _ = nn.utils.rnn.pad_packed_sequence(src_h, batch_first=True)
-        
-        src_h,src_state = self.init_decoder_state(src_h,src_state)
+        src_h,src_state = self.seq_encoder(src_emb,input_src_len)
+        src_state = torch.cat([src_state[0],src_state[1]],-1).unsqueeze(0)
+
+
         return src_h, src_state
 
     def get_attn_padding_mask(self,seq_q, seq_k):
@@ -516,12 +513,6 @@ class Seq2SeqLSTMAttention(nn.Module):
             dec_input = nn.Tanh()(self.dec_input_bridge(inputs))
         else:
             dec_input = trg_emb
-
-        # if isinstance(dec_hidden, tuple):
-        #     dec_hidden = (h_tilde.permute(1, 0, 2), dec_hidden[1])
-        # else:
-        #     dec_hidden = h_tilde.permute(1, 0, 2)
-        # trg_input = trg_inputs[:, di + 1].unsqueeze(1)
 
         return dec_input
 
@@ -565,6 +556,7 @@ class Seq2SeqLSTMAttention(nn.Module):
         # TODO 20180722, do_word_wisely_training=True is buggy
         do_word_wisely_training = False
         if not do_word_wisely_training:
+
             '''
             Teacher Forcing
             (1) Feedforwarding RNN
@@ -577,6 +569,7 @@ class Seq2SeqLSTMAttention(nn.Module):
             trg_emb = trg_emb.permute(1, 0, 2)  # (trg_len, batch_size, embed_dim)
 
             # both in/output of decoder LSTM is batch-second (trg_len, batch_size, trg_hidden_dim)
+            
             decoder_outputs, dec_hidden = self.decoder(
                 trg_emb, init_hidden
             )
@@ -584,7 +577,7 @@ class Seq2SeqLSTMAttention(nn.Module):
             (2) Standard Attention
             '''
             # Get the h_tilde (batch_size, trg_len, trg_hidden_dim) and attention weights (batch_size, trg_len, src_len)
-            h_tildes, attn_weights, attn_logits = self.attention_layer(decoder_outputs.permute(1, 0, 2), enc_context, encoder_mask=ctx_mask)
+            h_tildes, attn_weights, attn_logits = self.attention_layer(decoder_outputs.permute(1, 0, 2), enc_context,enc_context, encoder_mask=ctx_mask)
 
             # compute the output decode_logit and read-out as probs: p_x = Softmax(W_s * h_tilde), (batch_size, trg_len, trg_hidden_size) -> (batch_size * trg_len, vocab_size)
             # h_tildes=(batch_size, trg_len, trg_hidden_size) -> decoder2vocab(h_tildes.view)=(batch_size * trg_len, vocab_size) -> decoder_logits=(batch_size, trg_len, vocab_size)
@@ -595,10 +588,9 @@ class Seq2SeqLSTMAttention(nn.Module):
             '''
             if self.copy_attention:
                 # copy_weights and copy_logits is (batch_size, trg_len, src_len)
-                if not self.reuse_copy_attn:
-                    _, copy_weights, copy_logits = self.copy_attention_layer(decoder_outputs.permute(1, 0, 2), enc_context, encoder_mask=ctx_mask)
-                else:
-                    copy_logits = attn_logits
+                
+                copy_logits = attn_logits
+                copy_weights = attn_weights
 
                 # merge the generative and copying probs, (batch_size, trg_len, vocab_size + max_oov_number)
                 decoder_log_probs = self.merge_copy_probs(decoder_logits, copy_logits, src_map, oov_list)  # (batch_size, trg_len, vocab_size + max_oov_number)
@@ -803,7 +795,7 @@ class Seq2SeqLSTMAttention(nn.Module):
             )
             
             # Get the h_tilde (hidden after attention) and attention weights
-            h_tilde, attn_weight, attn_logit = self.attention_layer(decoder_output.permute(1, 0, 2), enc_context, encoder_mask=ctx_mask)
+            h_tilde, attn_weight, attn_logit = self.attention_layer(decoder_output.permute(1, 0, 2), enc_context, enc_context,encoder_mask=ctx_mask)
 
             # compute the output decode_logit and read-out as probs: p_x = Softmax(W_s * h_tilde)
             # (batch_size, trg_len, trg_hidden_size) -> (batch_size, 1, vocab_size)
@@ -814,10 +806,8 @@ class Seq2SeqLSTMAttention(nn.Module):
             else:
                 decoder_logit = decoder_logit.view(batch_size, 1, self.vocab_size)
                 # copy_weights and copy_logits is (batch_size, trg_len, src_len)
-                if not self.reuse_copy_attn:
-                    copy_h_tilde, copy_weight, copy_logit = self.copy_attention_layer(decoder_output.permute(1, 0, 2), enc_context, encoder_mask=ctx_mask)
-                else:
-                    copy_h_tilde, copy_weight, copy_logit = h_tilde, attn_weight, attn_logit
+                
+                copy_h_tilde, copy_weight, copy_logit = h_tilde, attn_weight, attn_logit
                 copy_weights.append(copy_weight.permute(1, 0, 2))  # (1, batch_size, src_len)
                 # merge the generative and copying probs (batch_size, 1, vocab_size + max_unk_word)
                 decoder_log_prob = self.merge_copy_probs(decoder_logit, copy_logit, src_map, oov_list)
@@ -902,7 +892,7 @@ class MeMDecoder(nn.Module):
 
 class NTMMemory(nn.Module):
     """Memory bank for NTM."""
-    def __init__(self,opt,init_memory=None,memory_mask=None,attention_mode = 'general',):
+    def __init__(self,opt,init_memory=None,memory_mask=None):
         """Initialize the NTM Memory matrix.
         The memory's dimensions are (batch_size x N x M).
         Each batch has it's own memory matrix.
@@ -912,7 +902,7 @@ class NTMMemory(nn.Module):
         super(NTMMemory, self).__init__()
 
         self.s_context = nn.Linear(opt.rnn_size+opt.rnn_size,opt.rnn_size)
-        self.attention = Attention(opt.rnn_size, opt.rnn_size, method=attention_mode)
+        self.attention = Attention(opt.rnn_size, opt.rnn_size, method=opt.attention_mode)
         self.W = nn.Parameter(torch.FloatTensor(opt.rnn_size, opt.rnn_size))
         init.xavier_normal_(self.W)
         
@@ -1003,12 +993,7 @@ class Dynamic_RNN(nn.Module):
         x_unsort_idx = np.argsort(x_sort_idx)
         x_len = x_len[x_sort_idx]
 
-
-
-        if self.use_gpu:
-            x_sort_idx = torch.LongTensor(x_sort_idx)
-            x_unsort_idx = torch.LongTensor(x_unsort_idx)
-
+        
         x = x[x_sort_idx]
         
         """pack"""
