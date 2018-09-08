@@ -232,7 +232,7 @@ def evaluate_beam_search(generator, data_loader, opt, title='', epoch=1, save_pa
             '''
             Evaluate predictions w.r.t different filterings and metrics
             '''
-            num_oneword_seq = 1# -1,1
+            num_oneword_seq = -1# -1,1
             topk_range = [5,10] #5,10
             score_names = ['precision', 'recall', 'f_score']
             

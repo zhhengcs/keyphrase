@@ -6,7 +6,7 @@ import json
 import os
 import sys
 import argparse
-
+import commands
 import logging
 import numpy as np
 import time
@@ -138,6 +138,7 @@ def train_model(model, optimizer_ml, criterion, train_data_loader,  opt,eval_dat
 
         # evaluate_per_epoch(model,eval_dataloader,opt,epoch)
               
+
 def load_data_vocab(opt, load_train=True):
 
     logging.info("Loading vocab from disk: %s" % (opt.vocab))
@@ -151,10 +152,11 @@ def load_data_vocab(opt, load_train=True):
     logging.info('======================  Dataset  =========================')
     # one2many data loader
     if load_train:
+    	
         train_one2one_loader = BucketIterator('./data/AAAI/train.one2one.json',word2id,id2word,
                                             batch_size=opt.batch_size,mode='keyword',
                                             repeat=False,sort=False,
-                                            shuffle=False,length=93849,
+                                            shuffle=False,
                                             Data_type=KeyphraseDataset)
         
         test_one2many_loader = BucketIterator('./data/AAAI/test.one2many.json',word2id,id2word,
@@ -164,7 +166,7 @@ def load_data_vocab(opt, load_train=True):
                                             repeat=False,
                                             sort=False,
                                             shuffle=False,
-                                            length=1988,
+                                            
                                             Data_type=KeyphraseDataset)
 
         logging.info('#(train data size:  #(one2one pair)=%d, #(batch)=%d' % (len(train_one2one_loader), len(train_one2one_loader) / train_one2one_loader.batch_size))

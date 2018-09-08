@@ -16,7 +16,7 @@ import sys
 import traceback
 import threading
 import itertools
-
+import commands
 if sys.version_info[0] == 2:
     string_classes = basestring
 else:
@@ -74,7 +74,7 @@ class BucketIterator(object):
             shuffle=None,repeat=False,
             mode=None,
             include_original=False,
-            length=None,Data_type=None):
+            Data_type=None):
 
         super(BucketIterator, self).__init__()#dataset=dataset,sort=False,shuffle=False,
                                             #batch_size=batch_size,repeat=repeat)
@@ -89,10 +89,14 @@ class BucketIterator(object):
         
         self.repeat = repeat
         self.sort = sort
-        self.length=length
+        
         self.mode = mode
         self.Data_Set=Data_type
+
+        _,length = commands.getstatusoutput('wc -l '+datapath)
+        self.length = int(length.split()[0])
     def __len__(self):
+
         return self.length
 
     def init_batches(self):

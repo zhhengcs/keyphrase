@@ -59,9 +59,7 @@ def main():
 
     print("Loading training data...")
     src_trgs_pairs = pykp.io.load_json_data(opt.train_path, name=opt.dataset, src_fields=src_fields, trg_fields=trg_fields, trg_delimiter=';')
-    # src_trgs_pairs = pykp.io.load_json_data(opt.train_path, name='stackexchange', src_fields=['title', 'question'], trg_fields=['tags'], trg_delimiter=';')
-    # src_trgs_pairs = pykp.io.load_json_data(opt.train_path, name='kp20k', src_fields=['title', 'abstract'], trg_fields=['keyword'], trg_delimiter=';')
-
+   
     print("Processing training data...")
     tokenized_train_pairs = pykp.io.tokenize_filter_data(
         src_trgs_pairs,
@@ -86,11 +84,11 @@ def main():
     # word2id,id2word,vocab = torch.load(open(opt.save_data + 'vocab.pt'))
 
     # print("Building training...")
-    train_one2one = pykp.io.build_dataset(tokenized_train_pairs, word2id, id2word, opt, mode='one2one')
+    train_one2one = pykp.io.build_dataset(tokenized_train_pairs, word2id, id2word, opt, mode='one2one',save_path=opt.save_data+'train.one2one.json')
     # train_one2many = pykp.io.build_dataset(tokenized_train_pairs,word2id,id2word,opt,mode='one2many',include_original=True)
     # print('#pairs of train_one2one = %d' % len(train_one2one))
     # print("Dumping train one2one to disk: %s" % (opt.save_data + '.train.one2one.pt'))
-    json_save(train_one2one,opt.save_data+'train.one2one.json')
+    json_save(train_one2one,)
     # json_save(train_one2many,opt.save_data+'train.one2many.json')
 
     

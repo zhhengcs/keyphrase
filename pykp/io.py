@@ -321,18 +321,19 @@ def tokenize_filter_data(src_trgs_pairs, tokenize, opt, valid_check=False):
     return return_pairs
 
 
-def build_dataset(src_trgs_pairs, word2id, id2word, opt, mode='one2one', include_original=False):
+def build_dataset(src_trgs_pairs, word2id, id2word, opt, mode='one2one', include_original=False,
+                    save_path=None):
     '''
     Standard process for copy model
     :param mode: one2one or one2many
     :param include_original: keep the original texts of source and target
     :return:
     '''
-    return_examples = []
+    
     oov_target = 0
     max_oov_len = 0
     max_oov_sent = ''
-
+    fw = open('save_path','w')
     for idx, (source, targets,query) in enumerate(src_trgs_pairs):
         # if w is not seen in training data vocab (word2id, size could be larger than opt.vocab_size), replace with <unk>
         src_all = [word2id[w] if w in word2id else word2id[UNK_WORD] for w in source]
@@ -383,7 +384,10 @@ def build_dataset(src_trgs_pairs, word2id, id2word, opt, mode='one2one', include
                 print('-------------------- %s: %d ---------------------------' % (inspect.getframeinfo(inspect.currentframe()).function, idx))
 
             if mode == 'one2one':
-                return_examples.append(example)
+                # return_examples.append(example)
+                json_str = json.dumps(example)
+                fw.write(json_str)
+                fw.write('\n')
             else:
                 examples.append(example)
 
@@ -404,7 +408,10 @@ def build_dataset(src_trgs_pairs, word2id, id2word, opt, mode='one2one', include
                 assert len(o2m_example['oov_dict']) == len(o2m_example['oov_list'])
                 assert len(o2m_example['trg']) == len(o2m_example['trg_copy'])
 
-            return_examples.append(o2m_example)
+            # return_examples.append(o2m_example)
+            json_str = json.dumps(o2m_example)
+            fw.write(json_str)
+            fw.write('\n')
 
     print('Find #(oov_target)/#(all) = %d/%d' % (oov_target, len(return_examples)))
     print('Find max_oov_len = %d' % (max_oov_len))

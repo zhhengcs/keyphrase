@@ -44,23 +44,17 @@ class Attention(nn.Module):
         self.method = method
         
         if self.method == 'general':
-            self.attn = nn.Linear(enc_dim, trg_dim)
+            self.W = nn.Linear(enc_dim, trg_dim,bias=False)
 
         elif self.method == 'concat':
+            # input size is enc_dim + trg_dim as it's a concatenation of both context vectors and target hidden state            
             attn = nn.Linear(enc_dim + trg_dim, trg_dim)
             v = nn.Linear(trg_dim, 1)
             self.attn = TimeDistributedDense(mlp=attn)
             self.v = TimeDistributedDense(mlp=v)
+            
 
         self.softmax = nn.Softmax()
-
-        # input size is enc_dim + trg_dim as it's a concatenation of both context vectors and target hidden state
-        # for Dot Attention, context vector has been converted to trg_dim first
-
-        if self.method == 'dot':
-            self.linear_out = nn.Linear(2 * trg_dim, trg_dim, bias=False)  # the W_c in Eq. 5 Luong et al. 2016 [Effective Approaches to Attention-based Neural Machine Translation]
-        else:
-            self.linear_out = nn.Linear(enc_dim + trg_dim, trg_dim, bias=False)  # the W_c in Eq. 5 Luong et al. 2016 [Effective Approaches to Attention-based Neural Machine Translation]
 
         self.tanh = nn.Tanh()
 
@@ -72,10 +66,13 @@ class Attention(nn.Module):
         '''
         if self.method == 'dot':
             # hidden (batch, trg_len, trg_hidden_dim) * encoder_outputs (batch, src_len, src_hidden_dim).transpose(1, 2) -> (batch, trg_len, src_len)
+            if encoder_mask is not None:
+                encoder_outputs =  encoder_outputs * encoder_mask.view(encoder_mask.size(0), encoder_mask.size(1), 1)
             energies = torch.bmm(hiddens, encoder_outputs.transpose(1, 2))  # (batch, trg_len, src_len)
+
         elif self.method == 'general':
             
-            energies = self.attn(encoder_outputs)  # (batch, src_len, trg_hidden_dim)
+            energies = self.W(encoder_outputs)  # (batch, src_len, trg_hidden_dim) ht*W*hs
             if encoder_mask is not None:
                 energies =  energies * encoder_mask.view(encoder_mask.size(0), encoder_mask.size(1), 1)
             # hidden (batch, trg_len, trg_hidden_dim) * encoder_outputs (batch, src_len, src_hidden_dim).transpose(1, 2) -> (batch, trg_len, src_len)
@@ -150,16 +147,16 @@ class Attention(nn.Module):
 
         # reweighting context, attn (batch_size, trg_len, src_len) * encoder_outputs (batch_size, src_len, src_hidden_dim) = (batch_size, trg_len, src_hidden_dim)
         
-        weighted_context = torch.bmm(attn_weights, V)
+        context = torch.bmm(attn_weights, V)
 
         # get h_tilde by = tanh(W_c[c_t, h_t]), both hidden and h_tilde are (batch_size, trg_hidden_dim)
         # (batch_size, trg_len=1, src_hidden_dim + trg_hidden_dim)
-        h_tilde = torch.cat((weighted_context, hidden), 2)
+        # h_tilde = torch.cat((weighted_context, hidden), 2)
         # (batch_size * trg_len, src_hidden_dim + trg_hidden_dim) -> (batch_size * trg_len, trg_hidden_dim)
-        h_tilde = self.tanh(self.linear_out(h_tilde.view(-1, context_dim + trg_hidden_dim)))
+        # h_tilde = self.tanh(self.linear_out(h_tilde.view(-1, context_dim + trg_hidden_dim)))
 
         # return h_tilde (batch_size, trg_len, trg_hidden_dim), attn (batch_size, trg_len, src_len) and energies (before softmax)
-        return h_tilde.view(batch_size, trg_len, trg_hidden_dim), attn_weights, attn_energies
+        return context.view(batch_size, trg_len, trg_hidden_dim), attn_weights, attn_energies
 
 
 class Seq2SeqLSTMAttention(nn.Module):
@@ -220,7 +217,7 @@ class Seq2SeqLSTMAttention(nn.Module):
         self.seq_encoder = Dynamic_RNN(input_size=self.emb_dim,hidden_size=self.src_hidden_dim/2,use_gpu=opt.use_gpu)
         self.matching_gru = Dynamic_RNN(self.src_hidden_dim*2,self.src_hidden_dim/2,use_gpu=opt.use_gpu)
         
-        self.decoder = nn.GRU(
+        self.RNN_decoder = nn.GRU(
             input_size=self.emb_dim,
             hidden_size=self.trg_hidden_dim,
             num_layers=self.nlayers_trg,
@@ -233,7 +230,7 @@ class Seq2SeqLSTMAttention(nn.Module):
         
         self.Cross_attention_layer = Attention(self.src_hidden_dim,self.src_hidden_dim,method=self.attention_mode)
         self.encoder2decoder = nn.Linear(
-            self.src_hidden_dim * self.num_directions,
+            self.src_hidden_dim,
             self.trg_hidden_dim
         )
 
@@ -247,7 +244,7 @@ class Seq2SeqLSTMAttention(nn.Module):
             # for Gu's model
             self.copy_attention_layer = Attention(self.src_hidden_dim * 1, self.trg_hidden_dim, method=self.copy_mode)
             # for See's model
-            # self.copy_gate            = nn.Linear(self.trg_hidden_dim, self.vocab_size)
+            self.copy_gate = nn.Linear(self.trg_hidden_dim, self.vocab_size)
         else:
             self.copy_mode = None
             self.copy_input_feeding = False
@@ -323,9 +320,9 @@ class Seq2SeqLSTMAttention(nn.Module):
         
         '''
         The differences of copy model from normal seq2seq here are:
-         1. The size of decoder_logits is (batch_size, trg_seq_len, vocab_size + max_oov_number).Usually vocab_size=50000 and max_oov_number=1000. And only very few of (it's very rare to have many unk words, in most cases it's because the text is not in English)
-         2. Return the copy_attn_weights as well. If it's See's model, the weights are same to attn_weights as it reuse the original attention
-         3. Very important: as we need to merge probs of copying and generative part, thus we have to operate with probs instead of logits. Thus here we return the probs not logits. Respectively, the loss criterion outside is NLLLoss but not CrossEntropyLoss any more.
+        1. The size of decoder_logits is (batch_size, trg_seq_len, vocab_size + max_oov_number).Usually vocab_size=50000 and max_oov_number=1000. And only very few of (it's very rare to have many unk words, in most cases it's because the text is not in English)
+        2. Return the copy_attn_weights as well. If it's See's model, the weights are same to attn_weights as it reuse the original attention
+        3. Very important: as we need to merge probs of copying and generative part, thus we have to operate with probs instead of logits. Thus here we return the probs not logits. Respectively, the loss criterion outside is NLLLoss but not CrossEntropyLoss any more.
         :param
             input_src : numericalized source text, oov words have been replaced with <unk>
             input_trg : numericalized target text, oov words have been replaced with <unk>
@@ -344,12 +341,15 @@ class Seq2SeqLSTMAttention(nn.Module):
 
         if self.encoder_name == 'Attention':
             encoder_outputs,encoder_hidden,query_outputs = self.attention_encode(input_src,input_src_len,ctx_mask,query,query_len,query_mask)
-
+            print(encoder_outputs.size(),'encoder_outputs')
+            print(encoder_hidden.size(),'encoder_outputs')
+            print(query_outputs.size(),'encoder_outputs')
+            exit(0)
         elif self.encoder_name == 'BiGRU':
             encoder_outputs, encoder_hidden = self.encode(input_src, input_src_len)
 
         if self.decoder_name == 'Memory Network':
-            
+            assert self.encoder_name !='BiGRU'
 
             self.Memory_Decoder.ntm.set_memory(query_outputs,ctx_mask,encoder_outputs)
 
@@ -385,14 +385,21 @@ class Seq2SeqLSTMAttention(nn.Module):
 
         context_query,_,_ = self.Cross_attention_layer(src_hidden,query_hidden,query_hidden,query_mask)
         x_with_query = torch.cat([src_hidden,context_query],-1)
+
+        context_doc,_,_ = self.Cross_attention_layer(query_hidden,src_hidden,src_hidden,src_mask)
+        query_with_x = torch.cat([query_hidden,context_doc],-1)
+
+        query_outputs,query_state = self.matching_gru(query_with_x,input_query_len)
         merge_output,merge_state = self.matching_gru(x_with_query,input_src_len)
+        
         p = 0.5
-        
         merge_output = src_hidden*p + (1-p)*merge_output
-        
+        query_outputs = query_hidden*p + (1-p)*query_outputs
+
         merge_state = torch.cat([merge_state[0],merge_state[1]],-1).unsqueeze(0)
-        query_output = merge_output.clone()
-        return merge_output,merge_state,query_output
+
+        # query_output = merge_output.clone()
+        return merge_output,merge_state,query_outputs
 
     def memory_decode(self,trg_inputs,src_map,oov_list,encoder_outputs,dec_hidden,trg_mask,ctx_mask,oov_lists):
         
@@ -403,14 +410,19 @@ class Seq2SeqLSTMAttention(nn.Module):
         enc_batch_extend_vocab = src_map
         # maximum length to unroll, ignore the last word (must be padding)
         max_dec_len = trg_inputs.size(1) - 1
-        batch_size,_ = trg_inputs.size()
+        # batch_size,_ = trg_inputs.size()
+        batch_size,src_len,context_dim = encoder_outputs.size()
+        _,_,trg_hidden_dim = dec_hidden.size()
 
         c_t_1 = Variable(torch.zeros(batch_size, 1, self.ctx_hidden_dim))
         
         if torch.cuda.is_available() and self.use_gpu:
             c_t_1 = c_t_1.cuda()
             
-        
+        # if self.attention_layer.method == 'dot':
+        #     encoder_outputs = nn.Tanh()(self.encoder2decoder(encoder_outputs.contiguous().view(-1, context_dim))).view(batch_size, src_len, trg_hidden_dim)
+        #     encoder_outputs = encoder_outputs * ctx_mask.view(ctx_mask.size() + (1,))
+
         max_art_oovs = max([len(x) for x in oov_lists])
         if max_art_oovs > 0:
             extra_zeros = Variable(torch.zeros((batch_size, max_art_oovs)))
@@ -544,7 +556,7 @@ class Seq2SeqLSTMAttention(nn.Module):
 
         # enc_context has to be reshaped before dot attention (batch_size, src_len, context_dim) -> (batch_size, src_len, trg_hidden_dim)
         if self.attention_layer.method == 'dot':
-            enc_context = nn.Tanh()(self.encoder2decoder_hidden(enc_context.contiguous().view(-1, context_dim))).view(batch_size, src_len, trg_hidden_dim)
+            enc_context = nn.Tanh()(self.encoder2decoder(enc_context.contiguous().view(-1, context_dim))).view(batch_size, src_len, trg_hidden_dim)
             enc_context = enc_context * ctx_mask.view(ctx_mask.size() + (1,))
 
         # maximum length to unroll, ignore the last word (must be padding)
@@ -570,7 +582,7 @@ class Seq2SeqLSTMAttention(nn.Module):
 
             # both in/output of decoder LSTM is batch-second (trg_len, batch_size, trg_hidden_dim)
             
-            decoder_outputs, dec_hidden = self.decoder(
+            decoder_outputs, dec_hidden = self.RNN_decoder(
                 trg_emb, init_hidden
             )
             '''
@@ -588,7 +600,7 @@ class Seq2SeqLSTMAttention(nn.Module):
             '''
             if self.copy_attention:
                 # copy_weights and copy_logits is (batch_size, trg_len, src_len)
-                
+
                 copy_logits = attn_logits
                 copy_weights = attn_weights
 
@@ -790,7 +802,7 @@ class Seq2SeqLSTMAttention(nn.Module):
             dec_input = self.merge_decode_inputs(trg_emb, h_tilde, copy_h_tilde)
 
             # (seq_len, batch_size, hidden_size * num_directions)
-            decoder_output, dec_hidden = self.decoder(
+            decoder_output, dec_hidden = self.RNN_decoder(
                 dec_input, dec_hidden
             )
             
