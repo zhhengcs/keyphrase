@@ -242,7 +242,7 @@ class SequenceGenerator(object):
 
         if self.model.decoder_name == 'Memory Network':
             # self.model.Memory_Decoder.ntm.set_memory(query_outputs,ctx_mask,encoder_outputs)
-            self.model.Memory_Decoder.ntm.set_memory(query_outputs,src_mask,src_context)
+            self.model.Memory_Decoder.ntm.set_memory(query_outputs,query_mask,src_context)
         else:
             query_outputs = torch.zeros(src_context.size())
 
@@ -276,10 +276,9 @@ class SequenceGenerator(object):
         '''
         for current_len in range(1, self.max_sequence_length + 1):
 
-            # print('partial length',len(partial_sequences))
             # the total number of partial sequences of all the batches
             num_partial_sequences = sum([len(batch_seqs) for batch_seqs in partial_sequences])
-            # print(num_partial_sequences,'num_partial_sequences')
+            
             if num_partial_sequences == 0:
                 # We have run out of partial candidates; often happens when beam_size is small
                 break
@@ -291,7 +290,7 @@ class SequenceGenerator(object):
 
             if self.model.decoder_name == 'Memory Network':
                 
-                self.model.Memory_Decoder.ntm.set_memory(query_context,ctx_mask,contexts)
+                self.model.Memory_Decoder.ntm.set_memory(query_context,query_mask,contexts)
 
                 log_probs,new_dec_hiddens,attn_weights = self.model.memory_generate(
                     trg_inputs = inputs,

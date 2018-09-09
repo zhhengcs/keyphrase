@@ -76,6 +76,7 @@ class Attention(nn.Module):
             if encoder_mask is not None:
                 energies =  energies * encoder_mask.view(encoder_mask.size(0), encoder_mask.size(1), 1)
             # hidden (batch, trg_len, trg_hidden_dim) * encoder_outputs (batch, src_len, src_hidden_dim).transpose(1, 2) -> (batch, trg_len, src_len)
+            
             energies = torch.bmm(hiddens, energies.transpose(1,2))  # (batch, trg_len, src_len)
         
         elif self.method == 'concat':
@@ -230,7 +231,7 @@ class Seq2SeqLSTMAttention(nn.Module):
         
         self.Cross_attention_layer = Attention(self.src_hidden_dim,self.src_hidden_dim,method=self.attention_mode)
         self.encoder2decoder = nn.Linear(
-            self.src_hidden_dim,
+            self.src_hidden_dim*self.num_directions,
             self.trg_hidden_dim
         )
 
@@ -341,17 +342,14 @@ class Seq2SeqLSTMAttention(nn.Module):
 
         if self.encoder_name == 'Attention':
             encoder_outputs,encoder_hidden,query_outputs = self.attention_encode(input_src,input_src_len,ctx_mask,query,query_len,query_mask)
-            print(encoder_outputs.size(),'encoder_outputs')
-            print(encoder_hidden.size(),'encoder_outputs')
-            print(query_outputs.size(),'encoder_outputs')
-            exit(0)
+            
         elif self.encoder_name == 'BiGRU':
             encoder_outputs, encoder_hidden = self.encode(input_src, input_src_len)
 
         if self.decoder_name == 'Memory Network':
             assert self.encoder_name !='BiGRU'
 
-            self.Memory_Decoder.ntm.set_memory(query_outputs,ctx_mask,encoder_outputs)
+            self.Memory_Decoder.ntm.set_memory(query_outputs,query_mask,encoder_outputs,ctx_mask)
 
             decoder_probs, decoder_hiddens, attn_weights, copy_attn_weights = self.memory_decode(trg_inputs=input_trg, 
                                                                     src_map=input_src_ext,
@@ -389,17 +387,19 @@ class Seq2SeqLSTMAttention(nn.Module):
         context_doc,_,_ = self.Cross_attention_layer(query_hidden,src_hidden,src_hidden,src_mask)
         query_with_x = torch.cat([query_hidden,context_doc],-1)
 
-        query_outputs,query_state = self.matching_gru(query_with_x,input_query_len)
-        merge_output,merge_state = self.matching_gru(x_with_query,input_src_len)
+        query_output,query_state = self.matching_gru(query_with_x,input_query_len)
+        src_output,src_state = self.matching_gru(x_with_query,input_src_len)
         
         p = 0.5
-        merge_output = src_hidden*p + (1-p)*merge_output
-        query_outputs = query_hidden*p + (1-p)*query_outputs
+        src_output = src_hidden*p + (1-p)*src_output
+        query_output = query_hidden*p + (1-p)*query_output
 
-        merge_state = torch.cat([merge_state[0],merge_state[1]],-1).unsqueeze(0)
+        src_state = torch.cat([src_state[0],src_state[1]],-1).unsqueeze(0)
+        query_state = torch.cat([query_state[0],query_state[1]],-1).unsqueeze(0)
 
-        # query_output = merge_output.clone()
-        return merge_output,merge_state,query_outputs
+        merge_state = self.encoder2decoder(torch.cat([src_state,query_state],-1))
+        
+        return src_output,merge_state,query_output
 
     def memory_decode(self,trg_inputs,src_map,oov_list,encoder_outputs,dec_hidden,trg_mask,ctx_mask,oov_lists):
         
@@ -408,13 +408,14 @@ class Seq2SeqLSTMAttention(nn.Module):
         decoder_probs = []
         decoder_hiddens = []
         enc_batch_extend_vocab = src_map
+        
         # maximum length to unroll, ignore the last word (must be padding)
         max_dec_len = trg_inputs.size(1) - 1
-        # batch_size,_ = trg_inputs.size()
         batch_size,src_len,context_dim = encoder_outputs.size()
         _,_,trg_hidden_dim = dec_hidden.size()
 
-        c_t_1 = Variable(torch.zeros(batch_size, 1, self.ctx_hidden_dim))
+        
+        c_t_1,_,_ = self.Memory_Decoder.read_src(s_t_1.transpose(0,1),encoder_outputs,encoder_outputs,ctx_mask)
         
         if torch.cuda.is_available() and self.use_gpu:
             c_t_1 = c_t_1.cuda()
@@ -457,8 +458,8 @@ class Seq2SeqLSTMAttention(nn.Module):
 
         batch_size,_ = trg_inputs.size()
 
-        c_t_1 = Variable(torch.zeros(batch_size,1,self.ctx_hidden_dim))
-
+        # c_t_1 = Variable(torch.zeros(batch_size,1,self.ctx_hidden_dim))
+        c_t_1,_,_ = self.Memory_Decoder.read_src(s_t_1.transpose(0,1),encoder_outputs,encoder_outputs,ctx_mask)
         if torch.cuda.is_available() and self.use_gpu:
             c_t_1 = c_t_1.cuda()
 
@@ -858,16 +859,14 @@ class Seq2SeqLSTMAttentionCascading(Seq2SeqLSTMAttention):
 class MeMDecoder(nn.Module):
     def __init__(self,opt):
         super(MeMDecoder, self).__init__()
-        self.attention_network = Attention(opt.rnn_size,opt.rnn_size)
+        self.read_src = Attention(opt.rnn_size, opt.rnn_size, method=opt.attention_mode)
         self.x_context = nn.Linear(opt.rnn_size + opt.word_vec_size, opt.rnn_size)
-        
         self.gru = nn.GRU(opt.rnn_size,opt.rnn_size,num_layers=1,batch_first=True,bidirectional=False)
         init_weights(self.gru)
-        
-        self.out= nn.Linear(opt.rnn_size, opt.vocab_size)
-        # self.init_weights(self.out)
-
+        self.out1 = nn.Linear(opt.rnn_size*2, opt.rnn_size)
+        self.out2 = nn.Linear(opt.rnn_size,opt.vocab_size)
         self.ntm = NTMMemory(opt)
+
     def show_attn(self,attn,src_input):
         pass
     
@@ -882,12 +881,15 @@ class MeMDecoder(nn.Module):
         gru_out, s_t = self.gru(x, s_t_1)
         
         for i in range(1):
-            c_t,attn_dist = self.ntm.Read(s_t)
+            c_t = self.ntm.Read(s_t)
             _,s_t = self.gru(c_t,s_t)
-            self.ntm.Write(s_t)
+            # self.ntm.Write(s_t)
+        
+        c_t,attn_dist,_ = self.read_src(s_t.transpose(0,1),encoder_outputs,encoder_outputs,enc_padding_mask)
+        
 
-
-        output = self.out(s_t.squeeze(0)) # B x vocab_size
+        output = self.out1(torch.cat([s_t,c_t.transpose(0,1)],-1).squeeze(0)) # B x vocab_size
+        output = self.out2(output)
         vocab_dist = F.softmax(output, dim=-1)
 
         vocab_dist_ = 0.5* vocab_dist
@@ -914,35 +916,36 @@ class NTMMemory(nn.Module):
         super(NTMMemory, self).__init__()
 
         self.s_context = nn.Linear(opt.rnn_size+opt.rnn_size,opt.rnn_size)
-        self.attention = Attention(opt.rnn_size, opt.rnn_size, method=opt.attention_mode)
+        self.read_q = Attention(opt.rnn_size, opt.rnn_size, method=opt.attention_mode)
         self.W = nn.Parameter(torch.FloatTensor(opt.rnn_size, opt.rnn_size))
         init.xavier_normal_(self.W)
         
-    def set_memory(self,K_memory,K_memory_mask,V_memory):
-        self.K_memory = K_memory
-        self.V_memory = V_memory
+    def set_memory(self,query_memory,query_mask,doc_memory,doc_mask=None):
+        self.query_memory = query_memory
+        self.query_mask = query_mask
+        # self.doc_memory = doc_memory
+        # self.doc_mask = doc_mask
 
-        self.K_memory_mask = K_memory_mask
-        _,self.N,self.M = K_memory.size()
+        _,self.N,self.M = query_memory.size()
 
     def size(self):
-        return self.K_memory.size()
+        return self.query_memory.size()
 
-    def Read(self, q_t):
+    def Read(self, s_t):
         """Read from memory (according to section 3.1)."""
-        context,attn_dist,_ = self.attention(q_t.transpose(0,1),self.K_memory,self.V_memory,self.K_memory_mask)
-        return context,attn_dist
+        context,_,_ = self.read_q(s_t.transpose(0,1),self.query_memory,self.query_memory,self.query_mask)
+        return context
 
     def Write(self,s_t):
         """write to memory (according to section 3.2)."""
-        self.prev_mem = self.K_memory
+        self.prev_mem = self.query_memory
         
-        _,w,_ = self.attention(s_t.transpose(0,1),self.K_memory,self.V_memory,self.K_memory_mask)
+        _,w,_ = self.attention(s_t.transpose(0,1),self.query_memory,self.doc_memory,self.query_mask)
         F_t = torch.sigmoid(torch.matmul(s_t.transpose(0,1),self.W)).repeat(1,self.N,1)#forget
         U_t = torch.sigmoid(torch.matmul(s_t.transpose(0,1),self.W)).repeat(1,self.N,1)#add
         erase = F_t*w.transpose(1,2)
         add = U_t*w.transpose(1,2)
-        self.K_memory = self.prev_mem * (1 - erase) + add
+        self.query_memory = self.prev_mem * (1 - erase) + add
     
 
 

@@ -63,7 +63,7 @@ def model_opts(parser):
     parser.add_argument('-dec_layers', type=int, default=1,
                         help='Number of layers in the decoder')
 
-    parser.add_argument('-rnn_size', type=int, default=300,
+    parser.add_argument('-rnn_size', type=int, default=200,
                         help='Size of LSTM hidden states')
     # parser.add_argument('-input_feed', type=int, default=1,
     #                     help="""Feed the context vector at each time step as
